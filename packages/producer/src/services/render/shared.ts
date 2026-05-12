@@ -10,10 +10,15 @@
  * backwards compatibility with existing test files and external callers.
  */
 
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { copyFileSync, cpSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { CANVAS_DIMENSIONS, type CanvasResolution } from "@hyperframes/core";
-import type { AudioElement, ImageElement, VideoElement } from "@hyperframes/engine";
+import type {
+  AudioElement,
+  ExtractedFrames,
+  ImageElement,
+  VideoElement,
+} from "@hyperframes/engine";
 import type { CompiledComposition } from "../htmlCompiler.js";
 import { defaultLogger, type ProducerLogger } from "../../logger.js";
 import { isPathInside } from "../../utils/paths.js";
@@ -240,4 +245,178 @@ export function updateJobStatus(
   job.progress = progress;
   if (status === "failed" || status === "complete") job.completedAt = new Date();
   if (onProgress) onProgress(job, stage);
+}
+
+/**
+ * Build a `resolver(framePath)` closure that maps an absolute path to
+ * a frame inside `compiledDir` into a server-relative URL the producer's
+ * file server will serve. Returns `null` for any path that escapes the
+ * compiled directory — the resolver is used by the video frame injector
+ * to rewrite local frame references into HTTP `<video>` srcs.
+ */
+export function createCompiledFrameSrcResolver(
+  compiledDir: string,
+): (framePath: string) => string | null {
+  const compiledRoot = resolve(compiledDir);
+  return (framePath: string): string | null => {
+    const resolvedFramePath = resolve(framePath);
+    if (!isPathInside(resolvedFramePath, compiledRoot)) return null;
+
+    const relativePath = relative(compiledRoot, resolvedFramePath);
+    if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      return null;
+    }
+
+    return `/${relativePath
+      .split(/[\\/]+/)
+      .map((segment) => encodeURIComponent(segment))
+      .join("/")}`;
+  };
+}
+
+type MaterializedExtractedFrames = Pick<ExtractedFrames, "videoId" | "outputDir" | "framePaths">;
+
+type MaterializePathModule = {
+  resolve: (...segments: string[]) => string;
+  join: (...segments: string[]) => string;
+  dirname: (path: string) => string;
+  basename: (path: string) => string;
+  relative: (from: string, to: string) => string;
+  isAbsolute: (path: string) => boolean;
+};
+
+type MaterializeFileSystem = {
+  existsSync: (path: string) => boolean;
+  mkdirSync: (path: string, options: { recursive: true }) => unknown;
+  symlinkSync: (target: string, path: string) => unknown;
+  cpSync: (src: string, dest: string, options: { recursive: true }) => unknown;
+};
+
+type MaterializeExtractedFramesOptions = {
+  pathModule?: MaterializePathModule;
+  fileSystem?: MaterializeFileSystem;
+  /**
+   * When `true`, recursively copy frames into `compiledDir` as real files
+   * instead of creating a single symlink per video. Required for
+   * distributed plan() output where the planDir must be self-contained
+   * across machines (symlinks don't survive S3 / GCS round-trips).
+   * Default `false` preserves the in-process renderer's symlink behavior.
+   */
+  materializeSymlinks?: boolean;
+};
+
+const materializePathModule: MaterializePathModule = {
+  resolve,
+  join,
+  dirname,
+  basename,
+  relative,
+  isAbsolute,
+};
+
+const materializeFileSystem: MaterializeFileSystem = {
+  existsSync,
+  mkdirSync,
+  symlinkSync,
+  cpSync,
+};
+
+/**
+ * Periodic peak-RSS / peak-heapUsed sampler. The benchmark harness reads
+ * the peaks to detect memory regressions (e.g. unbounded image-cache
+ * growth) that wall-clock metrics miss.
+ *
+ * Sampled every 250ms; the interval is `unref`'d so the sampler never
+ * holds the event loop open on its own. Callers MUST invoke `stop()`
+ * in a `finally` block — `stop()` takes one final reading before
+ * clearing the interval so the peak values are accurate up to the
+ * moment the render returns.
+ */
+export interface MemorySampler {
+  /** Take an immediate sample then read the peak RSS in bytes. */
+  peakRssBytes: () => number;
+  /** Take an immediate sample then read the peak heap-used in bytes. */
+  peakHeapUsedBytes: () => number;
+  /** Stop the interval after one final sample. Idempotent. */
+  stop: () => void;
+}
+
+export function createMemorySampler(intervalMs: number = 250): MemorySampler {
+  let peakRss = 0;
+  let peakHeap = 0;
+  const sample = (): void => {
+    try {
+      const m = process.memoryUsage();
+      if (m.rss > peakRss) peakRss = m.rss;
+      if (m.heapUsed > peakHeap) peakHeap = m.heapUsed;
+    } catch {
+      // Defensive: process.memoryUsage() shouldn't throw, but if it ever
+      // does we don't want to take down the render for a benchmark accessory.
+    }
+  };
+  sample();
+  const interval: NodeJS.Timeout = setInterval(sample, intervalMs);
+  interval.unref();
+  let stopped = false;
+  return {
+    // Resampling at read time means callers see the value at the
+    // moment of inspection, not the last 250ms tick — important for
+    // the success-path perf summary which captures peaks just before
+    // returning.
+    peakRssBytes: () => {
+      sample();
+      return peakRss;
+    },
+    peakHeapUsedBytes: () => {
+      sample();
+      return peakHeap;
+    },
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      sample();
+      clearInterval(interval);
+    },
+  };
+}
+
+/**
+ * Symlink (or copy) each extracted-frames directory into a stable path
+ * under `compiledDir/__hyperframes_video_frames/<videoId>/`, and rewrite
+ * the per-frame paths so the file server can serve them.
+ *
+ * Exported for integration tests; not part of the stable public API —
+ * external callers should use `executeRenderJob` instead.
+ */
+export function materializeExtractedFramesForCompiledDir(
+  extracted: MaterializedExtractedFrames[],
+  compiledDir: string,
+  options: MaterializeExtractedFramesOptions = {},
+): void {
+  const pathModule = options.pathModule ?? materializePathModule;
+  const fileSystem = options.fileSystem ?? materializeFileSystem;
+  const resolvedCompiledDir = pathModule.resolve(compiledDir);
+  const compiledFrameRoot = pathModule.join(resolvedCompiledDir, "__hyperframes_video_frames");
+
+  for (const ext of extracted) {
+    const resolvedOut = pathModule.resolve(ext.outputDir);
+    if (isPathInside(resolvedOut, resolvedCompiledDir, { pathModule })) continue;
+
+    const linkPath = pathModule.join(compiledFrameRoot, ext.videoId);
+    if (!fileSystem.existsSync(linkPath)) {
+      fileSystem.mkdirSync(pathModule.dirname(linkPath), { recursive: true });
+      if (options.materializeSymlinks) {
+        fileSystem.cpSync(resolvedOut, linkPath, { recursive: true });
+      } else {
+        fileSystem.symlinkSync(resolvedOut, linkPath);
+      }
+    }
+
+    const remapped = new Map<number, string>();
+    for (const [idx, framePath] of ext.framePaths) {
+      remapped.set(idx, pathModule.join(linkPath, pathModule.basename(framePath)));
+    }
+    ext.framePaths = remapped;
+    ext.outputDir = linkPath;
+  }
 }

@@ -33,43 +33,35 @@
 import {
   existsSync,
   mkdirSync,
-  rmSync,
   readFileSync,
   readSync,
   closeSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
   copyFileSync,
   appendFileSync,
-  symlinkSync,
-  cpSync,
 } from "fs";
 import { parseHTML } from "linkedom";
-import { type CanvasResolution, type Fps, fpsToNumber } from "@hyperframes/core";
+import { type CanvasResolution, type Fps } from "@hyperframes/core";
 import {
   type EngineConfig,
   resolveConfig,
-  type ExtractedFrames,
   type ExtractionPhaseBreakdown,
   type HdrTransfer,
-  createCaptureSession,
-  initializeSession,
   closeCaptureSession,
-  captureFrameToBuffer,
   type CaptureOptions,
   type CaptureVideoMetadataHint,
   type CaptureSession,
   type BeforeCaptureHook,
   createVideoFrameInjector,
   getEncoderPreset,
-  calculateOptimalWorkers,
   distributeFrames,
   executeParallelCapture,
   mergeWorkerFrames,
   type ParallelProgress,
   type WorkerTask,
-  analyzeCompositionHdr,
   captureAlphaPng,
   applyDomLayerMask,
   removeDomLayerMask,
@@ -83,16 +75,28 @@ import {
   type ElementStackingInfo,
   type HfTransitionMeta,
 } from "@hyperframes/engine";
-import { join, dirname, resolve, relative, isAbsolute, basename } from "path";
+import { join, dirname, resolve } from "path";
 import { randomUUID } from "crypto";
-import { freemem } from "os";
 import { fileURLToPath } from "url";
 import { createFileServer, type FileServerHandle, VIRTUAL_TIME_SHIM } from "./fileServer.js";
-import { type CompiledComposition } from "./htmlCompiler.js";
 import { defaultLogger, type ProducerLogger } from "../logger.js";
-import { isPathInside } from "../utils/paths.js";
 import { type HdrImageTransferCache } from "./hdrImageTransferCache.js";
-import { updateJobStatus } from "./render/shared.js";
+import {
+  createCompiledFrameSrcResolver,
+  createMemorySampler,
+  type MemorySampler,
+  updateJobStatus,
+} from "./render/shared.js";
+import { buildRenderErrorDetails, cleanupRenderResources, safeCleanup } from "./render/cleanup.js";
+import { resolveEffectiveHdrMode } from "./render/hdrMode.js";
+import { buildRenderPerfSummary } from "./render/perfSummary.js";
+import {
+  type CaptureCalibrationSample,
+  type CaptureCostEstimate,
+  resolveRenderWorkerCount,
+  runCaptureCalibration,
+} from "./render/captureCost.js";
+import { type HdrPerfCollector, type HdrPerfSummary, addHdrTiming } from "./render/hdrPerf.js";
 import { runCompileStage } from "./render/stages/compileStage.js";
 import { runProbeStage } from "./render/stages/probeStage.js";
 import { runExtractVideosStage } from "./render/stages/extractVideosStage.js";
@@ -102,23 +106,6 @@ import { runCaptureStreamingStage } from "./render/stages/captureStreamingStage.
 import { runCaptureHdrStage } from "./render/stages/captureHdrStage.js";
 import { runEncodeStage } from "./render/stages/encodeStage.js";
 import { runAssembleStage } from "./render/stages/assembleStage.js";
-
-/**
- * Wrap a cleanup operation so it never throws, but logs any failure.
- */
-async function safeCleanup(
-  label: string,
-  fn: () => Promise<void> | void,
-  log: ProducerLogger = defaultLogger,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (err) {
-    log.debug(`Cleanup failed (${label})`, {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
 
 function sampleDirectoryBytes(dir: string): number {
   let total = 0;
@@ -339,158 +326,35 @@ export interface HdrDiagnostics {
   imageDecodeFailures: number;
 }
 
-export interface HdrPerfSummary {
-  frames: number;
-  normalFrames: number;
-  transitionFrames: number;
-  domLayerCaptures: number;
-  hdrVideoLayerBlits: number;
-  hdrImageLayerBlits: number;
-  timings: Record<string, number>;
-  avgMs: Record<string, number>;
-}
+// HDR-pipeline perf collector lives in `./render/hdrPerf.ts`. Re-exported
+// from this module so the existing `import { ... } from "./renderOrchestrator"`
+// callers keep working unchanged.
+export {
+  type HdrPerfCollector,
+  type HdrPerfSummary,
+  type HdrPerfTimingKey,
+  addHdrTiming,
+  createHdrPerfCollector,
+  finalizeHdrPerf,
+} from "./render/hdrPerf.js";
 
-export type HdrPerfTimingKey =
-  | "frameSeekMs"
-  | "frameInjectMs"
-  | "stackingQueryMs"
-  | "canvasClearMs"
-  | "normalCompositeMs"
-  | "transitionCompositeMs"
-  | "encoderWriteMs"
-  | "hdrVideoReadDecodeMs"
-  | "hdrVideoTransferMs"
-  | "hdrVideoBlitMs"
-  | "hdrImageTransferMs"
-  | "hdrImageBlitMs"
-  | "domLayerSeekMs"
-  | "domLayerInjectMs"
-  | "domMaskApplyMs"
-  | "domScreenshotMs"
-  | "domMaskRemoveMs"
-  | "domPngDecodeMs"
-  | "domBlitMs";
-
-export interface HdrPerfCollector {
-  frames: number;
-  normalFrames: number;
-  transitionFrames: number;
-  domLayerCaptures: number;
-  hdrVideoLayerBlits: number;
-  hdrImageLayerBlits: number;
-  timings: Record<HdrPerfTimingKey, number>;
-}
-
-export function createHdrPerfCollector(): HdrPerfCollector {
-  return {
-    frames: 0,
-    normalFrames: 0,
-    transitionFrames: 0,
-    domLayerCaptures: 0,
-    hdrVideoLayerBlits: 0,
-    hdrImageLayerBlits: 0,
-    timings: {
-      frameSeekMs: 0,
-      frameInjectMs: 0,
-      stackingQueryMs: 0,
-      canvasClearMs: 0,
-      normalCompositeMs: 0,
-      transitionCompositeMs: 0,
-      encoderWriteMs: 0,
-      hdrVideoReadDecodeMs: 0,
-      hdrVideoTransferMs: 0,
-      hdrVideoBlitMs: 0,
-      hdrImageTransferMs: 0,
-      hdrImageBlitMs: 0,
-      domLayerSeekMs: 0,
-      domLayerInjectMs: 0,
-      domMaskApplyMs: 0,
-      domScreenshotMs: 0,
-      domMaskRemoveMs: 0,
-      domPngDecodeMs: 0,
-      domBlitMs: 0,
-    },
-  };
-}
-
-export function addHdrTiming(
-  perf: HdrPerfCollector | undefined,
-  key: HdrPerfTimingKey,
-  startMs: number,
-) {
-  if (!perf) return;
-  perf.timings[key] += Date.now() - startMs;
-}
-
-function averageTiming(totalMs: number, count: number): number {
-  return count > 0 ? Math.round((totalMs / count) * 100) / 100 : 0;
-}
-
-function finalizeHdrPerf(perf: HdrPerfCollector): HdrPerfSummary {
-  const avgMs: Record<string, number> = {};
-  const perFrameKeys: HdrPerfTimingKey[] = [
-    "frameSeekMs",
-    "frameInjectMs",
-    "stackingQueryMs",
-    "canvasClearMs",
-    "encoderWriteMs",
-  ];
-  for (const key of perFrameKeys) avgMs[key] = averageTiming(perf.timings[key], perf.frames);
-  avgMs.normalCompositeMs = averageTiming(perf.timings.normalCompositeMs, perf.normalFrames);
-  avgMs.transitionCompositeMs = averageTiming(
-    perf.timings.transitionCompositeMs,
-    perf.transitionFrames,
-  );
-
-  const perDomLayerKeys: HdrPerfTimingKey[] = [
-    "domLayerSeekMs",
-    "domLayerInjectMs",
-    "domMaskApplyMs",
-    "domScreenshotMs",
-    "domMaskRemoveMs",
-    "domPngDecodeMs",
-    "domBlitMs",
-  ];
-  for (const key of perDomLayerKeys) {
-    avgMs[key] = averageTiming(perf.timings[key], perf.domLayerCaptures);
-  }
-
-  const perHdrVideoKeys: HdrPerfTimingKey[] = [
-    "hdrVideoReadDecodeMs",
-    "hdrVideoTransferMs",
-    "hdrVideoBlitMs",
-  ];
-  for (const key of perHdrVideoKeys) {
-    avgMs[key] = averageTiming(perf.timings[key], perf.hdrVideoLayerBlits);
-  }
-
-  const perHdrImageKeys: HdrPerfTimingKey[] = ["hdrImageTransferMs", "hdrImageBlitMs"];
-  for (const key of perHdrImageKeys) {
-    avgMs[key] = averageTiming(perf.timings[key], perf.hdrImageLayerBlits);
-  }
-
-  return {
-    frames: perf.frames,
-    normalFrames: perf.normalFrames,
-    transitionFrames: perf.transitionFrames,
-    domLayerCaptures: perf.domLayerCaptures,
-    hdrVideoLayerBlits: perf.hdrVideoLayerBlits,
-    hdrImageLayerBlits: perf.hdrImageLayerBlits,
-    timings: { ...perf.timings },
-    avgMs,
-  };
-}
-
-export interface CaptureCostEstimate {
-  multiplier: number;
-  reasons: string[];
-  p95Ms?: number;
-}
-
-export interface CaptureCalibrationSample {
-  frameIndex: number;
-  captureTimeMs: number;
-}
+// Capture-cost calibration helpers and constants live in `./render/captureCost.ts`.
+// Re-exported here for backwards compatibility with existing
+// `import { ... } from "./renderOrchestrator"` callers.
+export {
+  type CaptureCalibrationOutcome,
+  type CaptureCalibrationSample,
+  type CaptureCostEstimate,
+  createCaptureCalibrationConfig,
+  createFailedCaptureCalibrationEstimate,
+  estimateCaptureCostMultiplier,
+  estimateMeasuredCaptureCostMultiplier,
+  logCaptureCalibrationResult,
+  measureCaptureCostFromSession,
+  resolveRenderWorkerCount,
+  runCaptureCalibration,
+  selectCaptureCalibrationFrames,
+} from "./render/captureCost.js";
 
 export interface FrameRange {
   startFrame: number;
@@ -583,105 +447,14 @@ function installDebugLogger(logPath: string, log: ProducerLogger = defaultLogger
   };
 }
 
-export function createCompiledFrameSrcResolver(
-  compiledDir: string,
-): (framePath: string) => string | null {
-  const compiledRoot = resolve(compiledDir);
-  return (framePath: string): string | null => {
-    const resolvedFramePath = resolve(framePath);
-    if (!isPathInside(resolvedFramePath, compiledRoot)) return null;
-
-    const relativePath = relative(compiledRoot, resolvedFramePath);
-    if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
-      return null;
-    }
-
-    return `/${relativePath
-      .split(/[\\/]+/)
-      .map((segment) => encodeURIComponent(segment))
-      .join("/")}`;
-  };
-}
-
-type MaterializedExtractedFrames = Pick<ExtractedFrames, "videoId" | "outputDir" | "framePaths">;
-
-type MaterializePathModule = {
-  resolve: (...segments: string[]) => string;
-  join: (...segments: string[]) => string;
-  dirname: (path: string) => string;
-  basename: (path: string) => string;
-  relative: (from: string, to: string) => string;
-  isAbsolute: (path: string) => boolean;
-};
-
-type MaterializeFileSystem = {
-  existsSync: (path: string) => boolean;
-  mkdirSync: (path: string, options: { recursive: true }) => unknown;
-  symlinkSync: (target: string, path: string) => unknown;
-  cpSync: (src: string, dest: string, options: { recursive: true }) => unknown;
-};
-
-type MaterializeExtractedFramesOptions = {
-  pathModule?: MaterializePathModule;
-  fileSystem?: MaterializeFileSystem;
-  /**
-   * When `true`, recursively copy frames into `compiledDir` as real files
-   * instead of creating a single symlink per video. Required for
-   * distributed plan() output where the planDir must be self-contained
-   * across machines (symlinks don't survive S3 / GCS round-trips).
-   * Default `false` preserves the in-process renderer's symlink behavior.
-   */
-  materializeSymlinks?: boolean;
-};
-
-const materializePathModule: MaterializePathModule = {
-  resolve,
-  join,
-  dirname,
-  basename,
-  relative,
-  isAbsolute,
-};
-
-const materializeFileSystem: MaterializeFileSystem = {
-  existsSync,
-  mkdirSync,
-  symlinkSync,
-  cpSync,
-};
-
-export function materializeExtractedFramesForCompiledDir(
-  extracted: MaterializedExtractedFrames[],
-  compiledDir: string,
-  options: MaterializeExtractedFramesOptions = {},
-): void {
-  const pathModule = options.pathModule ?? materializePathModule;
-  const fileSystem = options.fileSystem ?? materializeFileSystem;
-  const resolvedCompiledDir = pathModule.resolve(compiledDir);
-  const compiledFrameRoot = pathModule.join(resolvedCompiledDir, "__hyperframes_video_frames");
-
-  for (const ext of extracted) {
-    const resolvedOut = pathModule.resolve(ext.outputDir);
-    if (isPathInside(resolvedOut, resolvedCompiledDir, { pathModule })) continue;
-
-    const linkPath = pathModule.join(compiledFrameRoot, ext.videoId);
-    if (!fileSystem.existsSync(linkPath)) {
-      fileSystem.mkdirSync(pathModule.dirname(linkPath), { recursive: true });
-      if (options.materializeSymlinks) {
-        fileSystem.cpSync(resolvedOut, linkPath, { recursive: true });
-      } else {
-        fileSystem.symlinkSync(resolvedOut, linkPath);
-      }
-    }
-
-    const remapped = new Map<number, string>();
-    for (const [idx, framePath] of ext.framePaths) {
-      remapped.set(idx, pathModule.join(linkPath, pathModule.basename(framePath)));
-    }
-    ext.framePaths = remapped;
-    ext.outputDir = linkPath;
-  }
-}
+// Compile-output helpers (`createCompiledFrameSrcResolver`,
+// `materializeExtractedFramesForCompiledDir`) live in `./render/shared.ts`.
+// Re-exported from this module for backwards compatibility with existing
+// `import { ... } from "./renderOrchestrator"` call sites.
+export {
+  createCompiledFrameSrcResolver,
+  materializeExtractedFramesForCompiledDir,
+} from "./render/shared.js";
 
 export function collectVideoReadinessSkipIds(
   nativeHdrVideoIds: ReadonlySet<string>,
@@ -725,141 +498,6 @@ export function collectVideoMetadataHints(
       height: video.metadata.height,
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
-}
-
-export function resolveRenderWorkerCount(
-  totalFrames: number,
-  requestedWorkers: number | undefined,
-  cfg: EngineConfig,
-  compiled: Pick<CompiledComposition, "hasShaderTransitions" | "renderModeHints">,
-  log: ProducerLogger = defaultLogger,
-  measuredCaptureCost?: CaptureCostEstimate,
-): number {
-  const captureCost = combineCaptureCostEstimates(
-    estimateCaptureCostMultiplier(compiled),
-    measuredCaptureCost,
-  );
-  const workerCount = calculateOptimalWorkers(totalFrames, requestedWorkers, {
-    ...cfg,
-    captureCostMultiplier: captureCost.multiplier,
-  });
-
-  if (requestedWorkers !== undefined || captureCost.multiplier <= 1) {
-    return workerCount;
-  }
-
-  const baselineWorkers = calculateOptimalWorkers(totalFrames, undefined, cfg);
-  if (workerCount < baselineWorkers) {
-    log.warn(
-      "[Render] Reduced auto worker count for high-cost capture workload to avoid Chrome compositor starvation.",
-      {
-        from: baselineWorkers,
-        to: workerCount,
-        costMultiplier: captureCost.multiplier,
-        reasons: captureCost.reasons,
-      },
-    );
-  }
-
-  return workerCount;
-}
-
-export function estimateCaptureCostMultiplier(
-  compiled: Pick<CompiledComposition, "hasShaderTransitions" | "renderModeHints">,
-): CaptureCostEstimate {
-  let multiplier = 1;
-  const reasons: string[] = [];
-
-  if (compiled.hasShaderTransitions) {
-    multiplier += 2;
-    reasons.push("shader-transitions");
-  }
-
-  const reasonCodes = new Set(compiled.renderModeHints.reasons.map((reason) => reason.code));
-  if (reasonCodes.has("requestAnimationFrame")) {
-    multiplier += 1;
-    reasons.push("requestAnimationFrame");
-  }
-  if (reasonCodes.has("iframe")) {
-    multiplier += 0.5;
-    reasons.push("iframe");
-  }
-
-  return {
-    multiplier: Math.round(multiplier * 100) / 100,
-    reasons,
-  };
-}
-
-function combineCaptureCostEstimates(
-  staticCost: CaptureCostEstimate,
-  measuredCost?: CaptureCostEstimate,
-): CaptureCostEstimate {
-  if (!measuredCost || measuredCost.multiplier <= 1) return staticCost;
-  if (staticCost.multiplier >= measuredCost.multiplier) {
-    return {
-      multiplier: staticCost.multiplier,
-      reasons: [...staticCost.reasons, ...measuredCost.reasons],
-      p95Ms: measuredCost.p95Ms,
-    };
-  }
-  return {
-    multiplier: measuredCost.multiplier,
-    reasons: [...measuredCost.reasons, ...staticCost.reasons],
-    p95Ms: measuredCost.p95Ms,
-  };
-}
-
-const CAPTURE_CALIBRATION_TARGET_MS = 600;
-const MAX_MEASURED_CAPTURE_COST_MULTIPLIER = 8;
-const CAPTURE_CALIBRATION_PROTOCOL_TIMEOUT_MS = 30_000;
-
-export function createCaptureCalibrationConfig(cfg: EngineConfig): EngineConfig {
-  return {
-    ...cfg,
-    protocolTimeout: Math.min(cfg.protocolTimeout, CAPTURE_CALIBRATION_PROTOCOL_TIMEOUT_MS),
-  };
-}
-
-export function estimateMeasuredCaptureCostMultiplier(
-  samples: CaptureCalibrationSample[],
-): CaptureCostEstimate {
-  if (samples.length === 0) {
-    return { multiplier: 1, reasons: [] };
-  }
-
-  const sorted = [...samples].sort((a, b) => a.captureTimeMs - b.captureTimeMs);
-  const p95Index = Math.max(0, Math.ceil(sorted.length * 0.95) - 1);
-  const p95Sample = sorted[p95Index] ?? sorted[sorted.length - 1];
-  if (!p95Sample) {
-    return { multiplier: 1, reasons: [] };
-  }
-  const p95Ms = Math.round(p95Sample.captureTimeMs);
-  const multiplier = Math.min(
-    MAX_MEASURED_CAPTURE_COST_MULTIPLIER,
-    Math.max(1, Math.round((p95Ms / CAPTURE_CALIBRATION_TARGET_MS) * 100) / 100),
-  );
-
-  return {
-    multiplier,
-    reasons: multiplier > 1 ? [`calibration-p95=${p95Ms}ms`] : [],
-    p95Ms,
-  };
-}
-
-export function selectCaptureCalibrationFrames(totalFrames: number): number[] {
-  if (totalFrames <= 0) return [];
-  const lastFrame = totalFrames - 1;
-  const candidates = [
-    0,
-    Math.floor(totalFrames * 0.25),
-    Math.floor(totalFrames * 0.5),
-    Math.floor(totalFrames * 0.75),
-    lastFrame,
-  ];
-  return Array.from(
-    new Set(candidates.map((frame) => Math.max(0, Math.min(lastFrame, frame)))),
-  ).sort((a, b) => a - b);
 }
 
 export function findMissingFrameRanges(
@@ -925,12 +563,11 @@ export function isRecoverableParallelCaptureError(error: unknown): boolean {
   );
 }
 
-export function shouldFallbackToScreenshotAfterCalibrationError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /HeadlessExperimental\.beginFrame timed out|beginFrame probe timeout|Another frame is pending|Frame still pending|Protocol error.*HeadlessExperimental\.beginFrame|Runtime\.callFunctionOn timed out|Runtime\.evaluate timed out/i.test(
-    message,
-  );
-}
+// `shouldFallbackToScreenshotAfterCalibrationError` lives in
+// `./render/captureCost.ts` alongside the calibration runner. Re-exported
+// here for backwards compatibility with existing
+// `import { ... } from "./renderOrchestrator"` callers.
+export { shouldFallbackToScreenshotAfterCalibrationError } from "./render/captureCost.js";
 
 function countCapturedFrames(
   totalFrames: number,
@@ -947,61 +584,6 @@ function countCapturedFrames(
 
 function countFrameRanges(ranges: FrameRange[]): number {
   return ranges.reduce((sum, range) => sum + (range.endFrame - range.startFrame), 0);
-}
-
-async function measureCaptureCostFromSession(
-  session: CaptureSession,
-  totalFrames: number,
-  fps: number,
-): Promise<{ estimate: CaptureCostEstimate; samples: CaptureCalibrationSample[] }> {
-  const sampledFrames = selectCaptureCalibrationFrames(totalFrames);
-  const samples: CaptureCalibrationSample[] = [];
-
-  for (const frameIndex of sampledFrames) {
-    const time = frameIndex / fps;
-    const startedAt = Date.now();
-    const result = await captureFrameToBuffer(session, frameIndex, time);
-    samples.push({
-      frameIndex,
-      captureTimeMs: result.captureTimeMs || Date.now() - startedAt,
-    });
-  }
-
-  return {
-    estimate: estimateMeasuredCaptureCostMultiplier(samples),
-    samples,
-  };
-}
-
-function logCaptureCalibrationResult(
-  calibration: { estimate: CaptureCostEstimate; samples: CaptureCalibrationSample[] },
-  log: ProducerLogger,
-): void {
-  if (calibration.estimate.multiplier > 1) {
-    log.warn("[Render] Measured slow frame capture during auto-worker calibration.", {
-      multiplier: calibration.estimate.multiplier,
-      p95Ms: calibration.estimate.p95Ms,
-      sampledFrames: calibration.samples.map((sample) => sample.frameIndex),
-    });
-  } else {
-    log.debug("[Render] Auto-worker calibration kept baseline capture cost.", {
-      p95Ms: calibration.estimate.p95Ms,
-      sampledFrames: calibration.samples.map((sample) => sample.frameIndex),
-    });
-  }
-}
-
-function createFailedCaptureCalibrationEstimate(reason: string): {
-  estimate: CaptureCostEstimate;
-  samples: CaptureCalibrationSample[];
-} {
-  return {
-    estimate: {
-      multiplier: MAX_MEASURED_CAPTURE_COST_MULTIPLIER,
-      reasons: [reason],
-    },
-    samples: [],
-  };
 }
 
 export async function executeDiskCaptureWithAdaptiveRetry(options: {
@@ -1869,28 +1451,14 @@ export async function executeRenderJob(
   // §4.3 (`LockedRenderConfig.forceScreenshot`).
   const enableChunkedEncode = cfg.enableChunkedEncode;
   const chunkedEncodeSize = cfg.chunkSizeFrames;
-  // Periodic memory sampler — surfaces peak RSS/heap so the benchmark harness
-  // can detect memory regressions (e.g. unbounded image-cache growth) that
-  // wall-clock numbers miss. Sampled every 250ms; the interval is `unref`'d so
-  // it never keeps the event loop alive on its own, and always cleared in the
-  // finally block below regardless of how the render exits.
-  let peakRssBytes = 0;
-  let peakHeapUsedBytes = 0;
-  const sampleMemory = (): void => {
-    try {
-      const m = process.memoryUsage();
-      if (m.rss > peakRssBytes) peakRssBytes = m.rss;
-      if (m.heapUsed > peakHeapUsedBytes) peakHeapUsedBytes = m.heapUsed;
-    } catch {
-      // Defensive: process.memoryUsage() shouldn't throw, but if it ever
-      // does we don't want to take down the render for a benchmark accessory.
-    }
-  };
-  sampleMemory();
-  const memSamplerInterval: NodeJS.Timeout = setInterval(sampleMemory, 250);
-  memSamplerInterval.unref?.();
+  // Declared outside the try so `finally` can stop the interval, but
+  // the sampler is created INSIDE the try so a synchronous throw
+  // between declaration and the try-block (currently impossible, but
+  // defensible if more setup ever lands here) can't leak the interval.
+  let memSampler: MemorySampler | null = null;
 
   try {
+    memSampler = createMemorySampler();
     const assertNotAborted = () => {
       if (abortSignal?.aborted) {
         throw new RenderCancelledError("render_cancelled");
@@ -2023,68 +1591,13 @@ export async function executeRenderJob(
     perfStages.videoExtractMs = extractResult.videoExtractMs;
 
     // ── HDR auto-detection ──────────────────────────────────────────────
-    // Analyze probed video AND image color spaces. In auto mode, any HDR
-    // source enables HDR output. force-hdr always enables HDR, and force-sdr
-    // always disables it. Image-only compositions can trigger HDR output
-    // without any video.
-    let effectiveHdr: { transfer: HdrTransfer } | undefined;
-    let forcedHdrWithoutSources = false;
-    {
-      const hdrMode = job.config.hdrMode ?? "auto";
-      const videoColorSpaces = (extractionResult?.extracted ?? []).map(
-        (ext) => ext.metadata.colorSpace,
-      );
-      const allColorSpaces = [...videoColorSpaces, ...imageColorSpaces];
-      const info = allColorSpaces.length > 0 ? analyzeCompositionHdr(allColorSpaces) : null;
-
-      if (hdrMode === "force-sdr") {
-        effectiveHdr = undefined;
-      } else if (hdrMode === "force-hdr") {
-        if (info?.hasHdr && info.dominantTransfer) {
-          effectiveHdr = { transfer: info.dominantTransfer };
-        } else {
-          effectiveHdr = { transfer: "hlg" };
-          forcedHdrWithoutSources = true;
-        }
-      } else {
-        if (info?.hasHdr && info.dominantTransfer) {
-          effectiveHdr = { transfer: info.dominantTransfer };
-        }
-      }
-    }
-    if (effectiveHdr && outputFormat !== "mp4") {
-      const hdrSourceReason = forcedHdrWithoutSources
-        ? "HDR was forced without detected HDR sources"
-        : "HDR source detected";
-      log.warn(
-        `[Render] ${hdrSourceReason}, but format is "${outputFormat}" — falling back to SDR. ` +
-          `HDR + alpha is not supported. Use --format mp4 for HDR10 output.`,
-      );
-      effectiveHdr = undefined;
-    }
-    {
-      const hdrMode = job.config.hdrMode ?? "auto";
-      if (forcedHdrWithoutSources) {
-        log.warn(
-          "[Render] HDR forced by --hdr flag, but no HDR sources were detected — defaulting to HLG. SDR-only compositions may look perceptually wrong on HDR displays.",
-        );
-      }
-      if (effectiveHdr) {
-        const reason =
-          hdrMode === "force-hdr"
-            ? forcedHdrWithoutSources
-              ? "forced by --hdr flag (no HDR sources detected — defaulting to HLG)"
-              : "forced by --hdr flag"
-            : "auto-detected from source(s)";
-        log.info(
-          `[Render] HDR ${reason} — output: ${effectiveHdr.transfer.toUpperCase()} (BT.2020, 10-bit H.265)`,
-        );
-      } else if (hdrMode === "force-sdr") {
-        log.info("[Render] SDR forced by --sdr flag");
-      } else {
-        log.info("[Render] No HDR sources detected — rendering SDR");
-      }
-    }
+    const effectiveHdr = resolveEffectiveHdrMode({
+      hdrMode: job.config.hdrMode,
+      outputFormat,
+      extractionResult,
+      imageColorSpaces,
+      log,
+    });
 
     // ── Stage 3: Audio processing ───────────────────────────────────────
     updateJobStatus(job, "preprocessing", "Processing audio tracks", 20, onProgress);
@@ -2158,114 +1671,24 @@ export async function executeRenderJob(
       | undefined;
 
     if (job.config.workers === undefined && totalFrames >= 60) {
-      const calibrationDir = join(workDir, "capture-calibration");
-      // Build the calibration cfg from a `forceScreenshot`-applied view of
-      // `cfg` rather than reading `cfg.forceScreenshot` directly, so the
-      // capture-mode decision flows through `captureForceScreenshot`
-      // exclusively. Identity-equal to `cfg` when the values already match.
-      const calibrationBaseCfg: EngineConfig =
-        cfg.forceScreenshot === captureForceScreenshot
-          ? cfg
-          : { ...cfg, forceScreenshot: captureForceScreenshot };
-      const calibrationCfg = createCaptureCalibrationConfig(calibrationBaseCfg);
-      const videoInjector = createRenderVideoFrameInjector();
-      let calibrationSession: CaptureSession | null = null;
-      try {
-        calibrationSession = await createCaptureSession(
-          fileServer.url,
-          calibrationDir,
-          buildCaptureOptions(),
-          videoInjector,
-          calibrationCfg,
-        );
-        if (!calibrationSession.isInitialized) {
-          await initializeSession(calibrationSession);
-        }
-        assertNotAborted();
-
-        captureCalibration = await measureCaptureCostFromSession(
-          calibrationSession,
-          totalFrames,
-          fpsToNumber(job.config.fps),
-        );
-        logCaptureCalibrationResult(captureCalibration, log);
-      } catch (error) {
-        const shouldFallbackToScreenshot =
-          !captureForceScreenshot && shouldFallbackToScreenshotAfterCalibrationError(error);
-        if (shouldFallbackToScreenshot) {
-          // Runtime adaptation: BeginFrame failed under this host's Chrome
-          // build, so the rest of the pipeline switches to screenshot
-          // capture. We flip the local boolean only — `cfg` stays the
-          // compile-time view; downstream stages receive the new value
-          // via the explicit `forceScreenshot` parameter.
-          captureForceScreenshot = true;
-          if (probeSession) {
-            lastBrowserConsole = probeSession.browserConsoleBuffer;
-            await closeCaptureSession(probeSession).catch(() => {});
-            probeSession = null;
-          }
-          if (calibrationSession) {
-            lastBrowserConsole = calibrationSession.browserConsoleBuffer;
-            await closeCaptureSession(calibrationSession).catch(() => {});
-            calibrationSession = null;
-          }
-
-          log.warn(
-            "[Render] BeginFrame auto-worker calibration timed out; retrying calibration in screenshot capture mode.",
-            {
-              protocolTimeout: calibrationCfg.protocolTimeout,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          );
-
-          const screenshotCalibrationCfg = createCaptureCalibrationConfig({
-            ...cfg,
-            forceScreenshot: true,
-          });
-          try {
-            calibrationSession = await createCaptureSession(
-              fileServer.url,
-              join(workDir, "capture-calibration-screenshot"),
-              buildCaptureOptions(),
-              createRenderVideoFrameInjector(),
-              screenshotCalibrationCfg,
-            );
-            if (!calibrationSession.isInitialized) {
-              await initializeSession(calibrationSession);
-            }
-            assertNotAborted();
-
-            captureCalibration = await measureCaptureCostFromSession(
-              calibrationSession,
-              totalFrames,
-              fpsToNumber(job.config.fps),
-            );
-            logCaptureCalibrationResult(captureCalibration, log);
-          } catch (fallbackError) {
-            captureCalibration = createFailedCaptureCalibrationEstimate(
-              "calibration-screenshot-failed",
-            );
-            log.warn(
-              "[Render] Screenshot auto-worker calibration failed after BeginFrame fallback; using conservative worker budget.",
-              {
-                protocolTimeout: screenshotCalibrationCfg.protocolTimeout,
-                error:
-                  fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-              },
-            );
-          }
-        } else {
-          captureCalibration = createFailedCaptureCalibrationEstimate("calibration-failed");
-          log.warn("[Render] Auto-worker calibration failed; using conservative worker budget.", {
-            protocolTimeout: calibrationCfg.protocolTimeout,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      } finally {
-        if (calibrationSession) {
-          lastBrowserConsole = calibrationSession.browserConsoleBuffer;
-          await closeCaptureSession(calibrationSession).catch(() => {});
-        }
+      const outcome = await runCaptureCalibration({
+        cfg,
+        fileServer,
+        workDir,
+        log,
+        job,
+        totalFrames,
+        forceScreenshot: captureForceScreenshot,
+        probeSession,
+        buildCaptureOptions,
+        createRenderVideoFrameInjector,
+        assertNotAborted,
+      });
+      captureCalibration = outcome.calibration;
+      captureForceScreenshot = outcome.forceScreenshot;
+      probeSession = outcome.probeSession;
+      if (outcome.lastBrowserConsole.length > 0) {
+        lastBrowserConsole = outcome.lastBrowserConsole;
       }
     }
 
@@ -2541,49 +1964,31 @@ export async function executeRenderJob(
     updateJobStatus(job, "complete", "Render complete", 100, onProgress);
 
     const totalElapsed = Date.now() - pipelineStart;
-    sampleMemory();
 
     const tmpPeakBytes = existsSync(workDir) ? sampleDirectoryBytes(workDir) : 0;
 
-    const perfSummary: RenderPerfSummary = {
-      renderId: job.id,
-      totalElapsedMs: totalElapsed,
-      // RenderPerfSummary surfaces fps as a decimal because it lands in JSON
-      // payloads (CLI telemetry, regression-harness reports) where a single
-      // number is friendlier than `{num,den}`. Callers needing the rational
-      // back can read `job.config.fps`.
-      fps: fpsToNumber(job.config.fps),
-      quality: job.config.quality,
-      workers: workerCount,
-      chunkedEncode: enableChunkedEncode,
-      chunkSizeFrames: enableChunkedEncode ? chunkedEncodeSize : null,
+    const perfSummary = buildRenderPerfSummary({
+      job,
+      workerCount,
+      enableChunkedEncode,
+      chunkedEncodeSize,
       compositionDurationSeconds: composition.duration,
-      totalFrames: totalFrames,
-      resolution: { width: outputWidth, height: outputHeight },
+      totalFrames,
+      outputWidth,
+      outputHeight,
       videoCount: composition.videos.length,
       audioCount: composition.audios.length,
-      stages: perfStages,
+      totalElapsedMs: totalElapsed,
+      perfStages,
       videoExtractBreakdown: extractionResult?.phaseBreakdown,
       tmpPeakBytes,
-      captureCalibration: captureCalibration
-        ? {
-            sampledFrames: captureCalibration.samples.map((sample) => sample.frameIndex),
-            p95Ms: captureCalibration.estimate.p95Ms,
-            multiplier: captureCalibration.estimate.multiplier,
-            reasons: captureCalibration.estimate.reasons,
-          }
-        : undefined,
-      captureAttempts: captureAttempts.length > 0 ? captureAttempts : undefined,
-      hdrDiagnostics:
-        hdrDiagnostics.videoExtractionFailures > 0 || hdrDiagnostics.imageDecodeFailures > 0
-          ? { ...hdrDiagnostics }
-          : undefined,
-      hdrPerf: hdrPerf ? finalizeHdrPerf(hdrPerf) : undefined,
-      captureAvgMs:
-        totalFrames > 0 ? Math.round((perfStages.captureMs ?? 0) / totalFrames) : undefined,
-      peakRssMb: Math.round(peakRssBytes / (1024 * 1024)),
-      peakHeapUsedMb: Math.round(peakHeapUsedBytes / (1024 * 1024)),
-    };
+      captureCalibration,
+      captureAttempts,
+      hdrDiagnostics,
+      hdrPerf,
+      peakRssBytes: memSampler.peakRssBytes(),
+      peakHeapUsedBytes: memSampler.peakHeapUsedBytes(),
+    });
     job.perfSummary = perfSummary;
     if (job.config.debug) {
       try {
@@ -2623,36 +2028,20 @@ export async function executeRenderJob(
     if (error instanceof RenderCancelledError || abortSignal?.aborted) {
       job.error = error instanceof Error ? error.message : "render_cancelled";
       updateJobStatus(job, "cancelled", "Render cancelled", job.progress, onProgress);
-      if (fileServer) {
-        const fs = fileServer;
-        await safeCleanup(
-          "close file server (cancel)",
-          () => {
-            fs.close();
-          },
-          log,
-        );
-      }
-      if (probeSession) {
-        const session = probeSession;
-        await safeCleanup("close probe session (cancel)", () => closeCaptureSession(session), log);
-      }
-      if (!job.config.debug) {
-        await safeCleanup(
-          "remove workDir (cancel)",
-          () => {
-            rmSync(workDir, { recursive: true, force: true });
-          },
-          log,
-        );
-      }
+      await cleanupRenderResources({
+        fileServer,
+        probeSession,
+        workDir,
+        debug: Boolean(job.config.debug),
+        log,
+        label: "cancel",
+      });
       if (restoreLogger) restoreLogger();
       throw error instanceof RenderCancelledError
         ? error
         : new RenderCancelledError("render_cancelled");
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : undefined;
 
     // Suggest single-worker retry on parallel capture timeout.
     // Video-heavy compositions often cause multi-worker timeouts because
@@ -2671,55 +2060,27 @@ export async function executeRenderJob(
 
     job.error = errorMessage;
     updateJobStatus(job, "failed", `Failed: ${errorMessage}`, job.progress, onProgress);
-
-    // Diagnostic summary
-    const elapsed = Date.now() - pipelineStart;
-    const freeMemMB = Math.round(freemem() / (1024 * 1024));
-
-    // Populate structured error details for downstream consumers (SSE, sync response)
     job.failedStage = job.currentStage;
-    job.errorDetails = {
-      message: errorMessage,
-      stack: errorStack,
-      elapsedMs: elapsed,
-      freeMemoryMB: freeMemMB,
-      browserConsoleTail: lastBrowserConsole.length > 0 ? lastBrowserConsole.slice(-30) : undefined,
-      perfStages: Object.keys(perfStages).length > 0 ? { ...perfStages } : undefined,
-      hdrDiagnostics:
-        hdrDiagnostics.videoExtractionFailures > 0 || hdrDiagnostics.imageDecodeFailures > 0
-          ? { ...hdrDiagnostics }
-          : undefined,
-    };
+    job.errorDetails = buildRenderErrorDetails({
+      error,
+      pipelineStartMs: pipelineStart,
+      lastBrowserConsole,
+      perfStages,
+      hdrDiagnostics,
+    });
 
-    // Cleanup
-    if (fileServer) {
-      const fs = fileServer;
-      await safeCleanup(
-        "close file server (error)",
-        () => {
-          fs.close();
-        },
-        log,
-      );
-    }
-    if (probeSession) {
-      const session = probeSession;
-      await safeCleanup("close probe session (error)", () => closeCaptureSession(session), log);
-    }
-
-    if (!job.config.debug) {
-      await safeCleanup(
-        "remove workDir (error)",
-        () => {
-          if (existsSync(workDir)) rmSync(workDir, { recursive: true, force: true });
-        },
-        log,
-      );
-    }
+    await cleanupRenderResources({
+      fileServer,
+      probeSession,
+      workDir,
+      debug: Boolean(job.config.debug),
+      log,
+      label: "error",
+    });
 
     if (restoreLogger) restoreLogger();
     throw error;
   } finally {
-    clearInterval(memSamplerInterval);
+    memSampler?.stop();
   }
 }
