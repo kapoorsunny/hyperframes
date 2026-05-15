@@ -56,6 +56,17 @@ type TestMetadata = {
      * time; the in-process renderer accepts it.
      */
     format?: "mp4" | "webm" | "mov" | "png-sequence";
+    /**
+     * Codec selection for `format: "mp4"`, forwarded to
+     * `DistributedRenderConfig.codec`. The in-process renderer doesn't take
+     * a codec hint — for the baseline it always picks the format's default
+     * (h264 for mp4 SDR), so `codec: "h265"` is exercised exclusively in
+     * `--mode=distributed-simulated`. The PSNR comparison against the
+     * baseline therefore measures "h265 chunked + concat" ≈ "h264 single-
+     * pass" rather than byte equality. Fixtures asserting a tighter
+     * contract should explicitly pin a higher `minPsnr`.
+     */
+    codec?: "h264" | "h265";
     workers?: number; // Optional: auto-calculates if omitted
     /** Force HDR in the harness; omitted/false preserves historical SDR-only test behavior. */
     hdr?: boolean;
@@ -248,6 +259,25 @@ function validateMetadata(meta: unknown): TestMetadata {
   ) {
     throw new Error(
       "meta.json: 'renderConfig.format' must be 'mp4', 'webm', 'mov', or 'png-sequence' (or omit for mp4)",
+    );
+  }
+  if (rc.codec !== undefined && rc.codec !== "h264" && rc.codec !== "h265") {
+    throw new Error(
+      "meta.json: 'renderConfig.codec' must be 'h264' or 'h265' (or omit for the format's default)",
+    );
+  }
+  // Normalize the implicit default before comparing so a fixture that
+  // omits `format` (which defaults to "mp4" everywhere downstream) doesn't
+  // get accidentally treated as "format is missing, so codec is illegal."
+  // The previous formulation `rc.format !== undefined && rc.format !== "mp4"`
+  // worked but relied on the reader knowing the default; this reads the
+  // intent more directly.
+  const effectiveFormat = (rc.format as string | undefined) ?? "mp4";
+  if (rc.codec !== undefined && effectiveFormat !== "mp4") {
+    throw new Error(
+      `meta.json: 'renderConfig.codec' is only valid for format='mp4' (got format=${JSON.stringify(
+        rc.format,
+      )})`,
     );
   }
   if (rc.workers !== undefined) {
@@ -822,6 +852,7 @@ async function runTestSuite(
         renderedOutputPath,
         fps: fpsNum,
         format: outputFormat as "mp4" | "mov" | "png-sequence",
+        codec: suite.meta.renderConfig.codec,
         chunkSize: suite.meta.renderConfig.chunkSize,
         maxParallelChunks: suite.meta.renderConfig.maxParallelChunks,
         variables: suite.meta.renderConfig.variables,

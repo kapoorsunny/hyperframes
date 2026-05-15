@@ -117,6 +117,12 @@ export interface RunDistributedSimulatedInput {
   /** From the fixture's renderConfig — must pass `checkDistributedSupport`. */
   fps: 24 | 30 | 60;
   format: "mp4" | "mov" | "png-sequence";
+  /**
+   * Codec for `format: "mp4"`. Defaults to `"h264"`; pass `"h265"` to
+   * exercise the libx265 closed-GOP path. Ignored for non-mp4 formats —
+   * `plan()` throws if codec is passed with a non-mp4 format.
+   */
+  codec?: "h264" | "h265";
   /** Optional chunkSize override; defaults to the plan's 240. */
   chunkSize?: number;
   /** Optional maxParallelChunks override; defaults to the plan's 16. */
@@ -147,23 +153,38 @@ export async function runDistributedSimulatedRender(
   mkdirSync(planDir, { recursive: true });
   mkdirSync(chunksDir, { recursive: true });
 
-  // Step A: plan.
+  // Step A: plan. `codec` is only forwarded when the format actually
+  // accepts it — `plan()` throws if codec is set for a non-mp4 format,
+  // and a caller passing `format: "mov", codec: undefined` would still
+  // surface that field in the resulting object. We omit it conditionally
+  // to keep the off-path planDir identical to pre-codec-knob output.
   const planResult = await plan(
     input.projectDir,
-    {
-      fps: input.fps,
-      // Required-by-type but overridden by the composition's own attrs;
-      // see docstring above. Any positive integer works.
-      width: 1920,
-      height: 1080,
-      format: input.format,
-      chunkSize: input.chunkSize,
-      maxParallelChunks: input.maxParallelChunks,
-      // Force the SDR path explicitly — `auto` would still resolve to
-      // force-sdr in distributed mode, but pinning it here keeps the
-      // harness's behavior independent of any future auto-detect changes.
-      hdrMode: "force-sdr",
-    },
+    input.format === "mp4"
+      ? {
+          fps: input.fps,
+          width: 1920,
+          height: 1080,
+          format: "mp4",
+          codec: input.codec,
+          chunkSize: input.chunkSize,
+          maxParallelChunks: input.maxParallelChunks,
+          hdrMode: "force-sdr",
+        }
+      : {
+          fps: input.fps,
+          // Required-by-type but overridden by the composition's own attrs;
+          // see docstring above. Any positive integer works.
+          width: 1920,
+          height: 1080,
+          format: input.format,
+          chunkSize: input.chunkSize,
+          maxParallelChunks: input.maxParallelChunks,
+          // Force the SDR path explicitly — `auto` would still resolve to
+          // force-sdr in distributed mode, but pinning it here keeps the
+          // harness's behavior independent of any future auto-detect changes.
+          hdrMode: "force-sdr",
+        },
     planDir,
   );
 
