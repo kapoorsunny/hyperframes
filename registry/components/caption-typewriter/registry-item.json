@@ -1,0 +1,15 @@
+{
+  "$schema": "https://hyperframes.heygen.com/schema/registry-item.json",
+  "name": "caption-typewriter",
+  "type": "hyperframes:component",
+  "title": "Typewriter",
+  "description": "Green terminal character-by-character reveal with blinking cursor",
+  "tags": ["captions", "caption-style", "terminal", "typewriter", "hacker"],
+  "files": [
+    {
+      "path": "caption-typewriter.html",
+      "target": "compositions/components/caption-typewriter.html",
+      "type": "hyperframes:snippet"
+    }
+  ]
+}

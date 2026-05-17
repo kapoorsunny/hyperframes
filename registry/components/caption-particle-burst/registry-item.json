@@ -1,0 +1,15 @@
+{
+  "$schema": "https://hyperframes.heygen.com/schema/registry-item.json",
+  "name": "caption-particle-burst",
+  "type": "hyperframes:component",
+  "title": "Particle Burst",
+  "description": "Keyword words trigger colored particle explosions",
+  "tags": ["captions", "caption-style", "particles", "burst", "effects"],
+  "files": [
+    {
+      "path": "caption-particle-burst.html",
+      "target": "compositions/components/caption-particle-burst.html",
+      "type": "hyperframes:snippet"
+    }
+  ]
+}

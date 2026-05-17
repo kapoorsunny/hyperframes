@@ -1,0 +1,15 @@
+{
+  "$schema": "https://hyperframes.heygen.com/schema/registry-item.json",
+  "name": "caption-weight-shift",
+  "type": "hyperframes:component",
+  "title": "Weight Shift",
+  "description": "Elegant font-weight transition between caption lines",
+  "tags": ["captions", "caption-style", "minimal", "typography"],
+  "files": [
+    {
+      "path": "caption-weight-shift.html",
+      "target": "compositions/components/caption-weight-shift.html",
+      "type": "hyperframes:snippet"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://hyperframes.heygen.com/schema/registry-item.json",
+  "name": "caption-texture-lava",
+  "type": "hyperframes:component",
+  "title": "Texture Lava",
+  "description": "Flowing lava texture mask over large uppercase text",
+  "tags": ["captions", "caption-style", "texture", "lava", "mask"],
+  "files": [
+    {
+      "path": "caption-texture-lava.html",
+      "target": "compositions/components/caption-texture-lava.html",
+      "type": "hyperframes:snippet"
+    }
+  ]
+}
