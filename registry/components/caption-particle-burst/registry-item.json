@@ -11,5 +11,6 @@
       "target": "compositions/components/caption-particle-burst.html",
       "type": "hyperframes:snippet"
     }
-  ]
+  ],
+  "preview": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-particle-burst/preview.mp4"
 }
