@@ -308,7 +308,11 @@ export function inlineSubCompositions(
       }
     } else {
       for (const child of [...contentDoc.querySelectorAll("style, script")]) child.remove();
-      hostEl.innerHTML = contentDoc.body?.innerHTML || "";
+      // linkedom fragment parsing: when content is `<div data-composition-id="X">...</div>`,
+      // the div becomes documentElement and body is empty. Fall back to documentElement.outerHTML
+      // to preserve the composition wrapper.
+      const bodyHtml = contentDoc.body?.innerHTML || "";
+      hostEl.innerHTML = bodyHtml || contentDoc.documentElement?.outerHTML || "";
     }
 
     hostEl.setAttribute("data-composition-file", src);
