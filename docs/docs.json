@@ -197,6 +197,7 @@
           {
             "group": "Effects",
             "pages": [
+              "catalog/components/caption-blend-difference",
               "catalog/components/grain-overlay",
               "catalog/components/grid-pixelate-wipe",
               "catalog/components/shimmer-sweep",
