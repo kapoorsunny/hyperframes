@@ -131,46 +131,24 @@ describe("inlineSubCompositions – #ID selector scoping divergence", () => {
     expect(scopedCss).toContain('[data-hf-authored-id="intro"]');
   });
 
-  /**
-   * Known divergence: the producer path strips the inner root element via
-   * innerHTML (line 307 of inlineSubCompositions.ts), losing the id attribute.
-   * The bundler path preserves it via flattenInnerRoot + data-hf-authored-id.
-   *
-   * Both paths rewrite CSS and GSAP selectors from `#intro` to
-   * `[data-hf-authored-id="intro"]`, but only the bundler path actually adds
-   * that attribute to an element. In the producer path, no element carries
-   * `data-hf-authored-id`, so the rewritten selectors match nothing.
-   *
-   * Workaround: use [data-composition-id="name"] as scope in sub-compositions
-   * instead of #name.
-   *
-   * Proper fix (follow-up): make the producer path add data-hf-authored-id
-   * to the host element when the inner root has an id attribute.
-   */
-  // FIXME(#969): flip these assertions once the producer path adds
-  // data-hf-authored-id to the host element. See PR #965 "Proper fix (follow-up)".
-  it("documents the divergence: producer path lacks data-hf-authored-id element", () => {
+  it("producer path propagates data-hf-authored-id to host when inner root has id", () => {
     const document = makeHostDocument("intro");
     const host = document.querySelector('[data-composition-src="intro.html"]')!;
 
-    // Producer path: no flattenInnerRoot
     inlineSubCompositions(document, [host], {
       resolveHtml: () => SUB_COMP_HTML,
       parseHtml: (html) => parseHTML(html).document,
     });
 
-    // After producer inlining, no element inside the host has
-    // data-hf-authored-id="intro". The rewritten CSS/GSAP selectors
-    // targeting [data-hf-authored-id="intro"] will match nothing.
-    const authoredIdElement = host.querySelector('[data-hf-authored-id="intro"]');
-    expect(authoredIdElement).toBeNull();
+    // The inner root's id="intro" is stripped (innerHTML), but the producer
+    // now propagates it as data-hf-authored-id on the host element so that
+    // rewritten #ID selectors ([data-hf-authored-id="intro"]) resolve.
+    expect(host.getAttribute("data-hf-authored-id")).toBe("intro");
 
-    // The original #intro element is gone — innerHTML stripped it.
+    // The original #intro element is still gone — innerHTML stripped it.
     const introById = host.querySelector("#intro");
     expect(introById).toBeNull();
 
-    // Only the host itself has data-composition-id="intro", which is the
-    // correct workaround scope to use.
     expect(host.getAttribute("data-composition-id")).toBe("intro");
   });
 });
