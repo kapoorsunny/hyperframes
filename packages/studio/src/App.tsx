@@ -12,6 +12,7 @@ import { usePreviewPersistence } from "./hooks/usePreviewPersistence";
 import { useTimelineEditing } from "./hooks/useTimelineEditing";
 import { addBlockToProject } from "./utils/blockInstaller";
 import type { BlockParam } from "@hyperframes/core/registry";
+import type { BlockPreviewInfo } from "./components/sidebar/BlocksTab";
 import { useDomEditSession } from "./hooks/useDomEditSession";
 import { useAppHotkeys } from "./hooks/useAppHotkeys";
 import { useClipboard } from "./hooks/useClipboard";
@@ -80,6 +81,7 @@ export function StudioApp() {
     params: BlockParam[];
     compositionPath: string;
   } | null>(null);
+  const [blockPreview, setBlockPreview] = useState<BlockPreviewInfo | null>(null);
 
   const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const activeCompPathRef = useRef(activeCompPath);
@@ -190,6 +192,8 @@ export function StudioApp() {
           projectId,
           blockName,
           activeCompPath,
+          previewIframe: previewIframeRef.current,
+          currentTime: usePlayerStore.getState().currentTime,
           timelineElements,
           readProjectFile: fileManager.readProjectFile,
           writeProjectFile: fileManager.writeProjectFile,
@@ -233,6 +237,40 @@ export function StudioApp() {
         blockName,
         activeCompPath,
         placement,
+        previewIframe: previewIframeRef.current,
+        currentTime: usePlayerStore.getState().currentTime,
+        timelineElements,
+        readProjectFile: fileManager.readProjectFile,
+        writeProjectFile: fileManager.writeProjectFile,
+        recordEdit: editHistory.recordEdit,
+        refreshFileTree: fileManager.refreshFileTree,
+        reloadPreview,
+        showToast,
+      });
+    },
+    [
+      projectId,
+      activeCompPath,
+      timelineElements,
+      fileManager.readProjectFile,
+      fileManager.writeProjectFile,
+      fileManager.refreshFileTree,
+      editHistory.recordEdit,
+      reloadPreview,
+      showToast,
+    ],
+  );
+
+  const handlePreviewBlockDrop = useCallback(
+    (blockName: string, position: { left: number; top: number }) => {
+      if (!projectId) return;
+      void addBlockToProject({
+        projectId,
+        blockName,
+        activeCompPath,
+        visualPosition: position,
+        previewIframe: previewIframeRef.current,
+        currentTime: usePlayerStore.getState().currentTime,
         timelineElements,
         readProjectFile: fileManager.readProjectFile,
         writeProjectFile: fileManager.writeProjectFile,
@@ -532,6 +570,7 @@ export function StudioApp() {
                   leftSidebarRef={leftSidebarRef}
                   onSelectComposition={handleSelectComposition}
                   onAddBlock={handleAddBlock}
+                  onPreviewBlock={setBlockPreview}
                   onLint={handleLint}
                   linting={linting}
                 />
@@ -541,6 +580,7 @@ export function StudioApp() {
                   handleTimelineElementDelete={timelineEditing.handleTimelineElementDelete}
                   handleTimelineAssetDrop={timelineEditing.handleTimelineAssetDrop}
                   handleTimelineBlockDrop={handleTimelineBlockDrop}
+                  handlePreviewBlockDrop={handlePreviewBlockDrop}
                   handleTimelineFileDrop={timelineEditing.handleTimelineFileDrop}
                   handleTimelineElementMove={timelineEditing.handleTimelineElementMove}
                   handleTimelineElementResize={timelineEditing.handleTimelineElementResize}
@@ -548,6 +588,7 @@ export function StudioApp() {
                   setCompIdToSrc={setCompIdToSrc}
                   setCompositionLoading={setCompositionLoading}
                   shouldShowSelectedDomBounds={shouldShowSelectedDomBounds}
+                  blockPreview={blockPreview}
                 />
 
                 {!panelLayout.rightCollapsed && (

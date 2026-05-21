@@ -481,6 +481,22 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
   app.get("/icons/*", serveStudioStaticFile);
   app.get("/favicon.svg", serveStudioStaticFile);
 
+  // ── Runtime env injection ───────────────────────────────────────────────
+  // When the studio is served as a pre-built SPA, Vite `VITE_STUDIO_*` env
+  // vars were baked at build time. Collect any such vars from the current
+  // process.env and inject them as `window.__HF_STUDIO_ENV__` so the client
+  // can pick them up at runtime, overriding the baked defaults.
+  function buildRuntimeEnvScript(): string {
+    const overrides: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (key.startsWith("VITE_STUDIO_") && value !== undefined) {
+        overrides[key] = value;
+      }
+    }
+    if (Object.keys(overrides).length === 0) return "";
+    return `<script>window.__HF_STUDIO_ENV__=${JSON.stringify(overrides)};</script>`;
+  }
+
   // SPA fallback
   app.get("*", (c) => {
     const indexPath = resolve(studioDir, "index.html");
@@ -540,7 +556,12 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
         500,
       );
     }
-    return c.html(readFileSync(indexPath, "utf-8"));
+    let html = readFileSync(indexPath, "utf-8");
+    const envScript = buildRuntimeEnvScript();
+    if (envScript) {
+      html = html.replace("<head>", `<head>${envScript}`);
+    }
+    return c.html(html);
   });
 
   return { app, watcher };

@@ -12,7 +12,6 @@ import {
   type PreviewZoomState,
 } from "./previewZoom";
 import { readStudioUiPreferences, writeStudioUiPreferences } from "../../utils/studioUiPreferences";
-
 interface NLEPreviewProps {
   projectId: string;
   iframeRef: Ref<HTMLIFrameElement>;
@@ -21,6 +20,7 @@ interface NLEPreviewProps {
   portrait?: boolean;
   directUrl?: string;
   suppressLoadingOverlay?: boolean;
+  onStageRef?: (ref: React.RefObject<HTMLDivElement | null>) => void;
 }
 
 export function getPreviewPlayerKey({
@@ -90,10 +90,14 @@ export const NLEPreview = memo(function NLEPreview({
   portrait,
   directUrl,
   suppressLoadingOverlay,
+  onStageRef,
 }: NLEPreviewProps) {
   const activeKey = getPreviewPlayerKey({ projectId, directUrl });
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    onStageRef?.(stageRef);
+  }, [onStageRef]);
   const [stageSize, setStageSize] = useState(() => resolvePreviewStageSize(0, 0, portrait));
 
   const zoomRef = useRef<PreviewZoomState>(loadInitialZoom());
