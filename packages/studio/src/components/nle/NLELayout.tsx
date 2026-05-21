@@ -133,8 +133,8 @@ export const NLELayout = memo(function NLELayout({
 
   // Lightweight reload: change iframe src instead of destroying the Player.
   // refreshPlayer() saves the seek position and appends a cache-busting _t
-  // param, avoiding the full web-component teardown + crossfade that the
-  // key-based path uses.
+  // param — the Player instance stays alive so the adapter is available for
+  // saveSeekPosition() to read the current time before the reload.
   const prevRefreshKeyRef = useRef(refreshKey);
   useEffect(() => {
     if (refreshKey === prevRefreshKeyRef.current) return;
@@ -352,7 +352,6 @@ export const NLELayout = memo(function NLELayout({
             onCompositionLoadingChange={setCompositionLoading}
             portrait={portrait}
             directUrl={directUrl}
-            refreshKey={refreshKey}
             suppressLoadingOverlay={hasLoadedOnceRef.current}
           />
           {!isFullscreen && previewOverlay}
