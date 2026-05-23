@@ -168,57 +168,46 @@
             color: #e2e8f0;
           "
         >
-          <div id="laptop-scroll" style="background:linear-gradient(160deg,#1a0533,#0a2540,#0ea5e9,#ec4899,#f59e0b);background-size:200% 200%;color:#fff;transform:translateY(0)">
+          <div id="laptop-scroll" style="width:1440px;height:900px;background:linear-gradient(160deg,#1a0533 0%,#0a2540 25%,#0ea5e9 50%,#ec4899 75%,#f59e0b 100%);color:#fff;transform:translateY(0)">
             <div id="laptop-title" style="display:none"></div><span id="laptop-count" style="display:none"></span><div id="laptop-cards" style="display:none"></div>
-            <!-- macOS Tahoe Menu Bar -->
-            <div style="display:flex;align-items:center;padding:4px 16px;background:rgba(40,40,50,0.55);font-size:11px;font-weight:500;gap:16px;backdrop-filter:blur(20px);">
-              <span style="font-weight:800;font-size:13px;">&#63743;</span>
+            <!-- Menu Bar -->
+            <div style="display:flex;align-items:center;padding:6px 20px;background:rgba(40,40,50,0.7);font-size:13px;font-weight:500;gap:20px;height:32px;">
+              <span style="font-weight:800;font-size:15px;">&#63743;</span>
               <span style="font-weight:600;">Finder</span>
               <span>File</span><span>Edit</span><span>View</span><span>Go</span><span>Window</span><span>Help</span>
               <div style="flex:1"></div>
-              <span style="font-size:10px;">🔋 92%</span>
-              <span style="font-size:10px;">📶</span>
-              <span style="font-size:10px;font-variant-numeric:tabular-nums;">Fri 15:16</span>
+              <span style="font-size:11px;">🔋 92%</span>
+              <span style="font-size:11px;">📶</span>
+              <span style="font-size:11px;font-variant-numeric:tabular-nums;">Fri 15:16</span>
             </div>
-            <!-- Finder Window -->
-            <div style="position:absolute;top:60px;left:120px;width:900px;height:550px;border-radius:12px;background:rgba(30,30,40,0.65);backdrop-filter:blur(30px);border:1px solid rgba(255,255,255,0.1);overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.4);">
-              <div style="display:flex;align-items:center;padding:10px 14px;background:rgba(50,50,60,0.5);gap:8px;border-bottom:1px solid rgba(255,255,255,0.06);">
-                <span style="width:12px;height:12px;border-radius:50%;background:#FF5F57;"></span>
-                <span style="width:12px;height:12px;border-radius:50%;background:#FEBC2E;"></span>
-                <span style="width:12px;height:12px;border-radius:50%;background:#28C840;"></span>
-                <span style="flex:1;text-align:center;font-size:12px;font-weight:600;color:rgba(255,255,255,0.7);">HyperFrames</span>
+            <!-- Finder Window (using margin instead of absolute) -->
+            <div style="margin:40px 180px 0;width:900px;height:550px;border-radius:12px;background:rgba(30,30,40,0.75);border:1px solid rgba(255,255,255,0.12);overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+              <div style="display:flex;align-items:center;padding:10px 14px;background:rgba(50,50,60,0.6);gap:8px;border-bottom:1px solid rgba(255,255,255,0.08);">
+                <span style="width:12px;height:12px;border-radius:50%;background:#FF5F57;display:inline-block;"></span>
+                <span style="width:12px;height:12px;border-radius:50%;background:#FEBC2E;display:inline-block;"></span>
+                <span style="width:12px;height:12px;border-radius:50%;background:#28C840;display:inline-block;"></span>
+                <span style="flex:1;text-align:center;font-size:13px;font-weight:600;color:rgba(255,255,255,0.7);">HyperFrames</span>
               </div>
-              <div style="display:flex;height:calc(100% - 38px);">
-                <div style="width:180px;padding:10px;border-right:1px solid rgba(255,255,255,0.06);font-size:10px;">
-                  <div style="padding:4px 8px;border-radius:6px;background:rgba(0,122,255,0.3);color:#5AC8FA;font-weight:600;margin-bottom:4px;">📁 Favorites</div>
-                  <div style="padding:4px 8px;color:rgba(255,255,255,0.5);">🏠 Home</div>
-                  <div style="padding:4px 8px;color:rgba(255,255,255,0.5);">💻 Desktop</div>
-                  <div style="padding:4px 8px;color:rgba(255,255,255,0.5);">📥 Downloads</div>
-                  <div style="padding:4px 8px;color:rgba(255,255,255,0.5);">📄 Documents</div>
-                  <div style="padding:4px 8px;color:rgba(255,255,255,0.5);">☁ iCloud</div>
+              <div style="display:flex;height:510px;">
+                <div style="width:200px;padding:14px;border-right:1px solid rgba(255,255,255,0.08);font-size:12px;">
+                  <div style="padding:6px 10px;border-radius:6px;background:rgba(0,122,255,0.3);color:#5AC8FA;font-weight:600;margin-bottom:6px;">📁 Favorites</div>
+                  <div style="padding:6px 10px;color:rgba(255,255,255,0.5);">🏠 Home</div>
+                  <div style="padding:6px 10px;color:rgba(255,255,255,0.5);">💻 Desktop</div>
+                  <div style="padding:6px 10px;color:rgba(255,255,255,0.5);">📥 Downloads</div>
+                  <div style="padding:6px 10px;color:rgba(255,255,255,0.5);">📄 Documents</div>
+                  <div style="padding:6px 10px;color:rgba(255,255,255,0.5);">☁ iCloud</div>
                 </div>
-                <div style="flex:1;padding:12px;display:grid;grid-template-columns:repeat(5,1fr);gap:8px;align-content:start;">
-                  <div style="text-align:center;padding:8px"><div style="font-size:32px;">📁</div><div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:4px;">packages</div></div>
-                  <div style="text-align:center;padding:8px"><div style="font-size:32px;">📁</div><div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:4px;">registry</div></div>
-                  <div style="text-align:center;padding:8px"><div style="font-size:32px;">📁</div><div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:4px;">docs</div></div>
-                  <div style="text-align:center;padding:8px"><div style="font-size:32px;">📁</div><div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:4px;">skills</div></div>
-                  <div style="text-align:center;padding:8px"><div style="font-size:32px;">📄</div><div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:4px;">CLAUDE.md</div></div>
-                  <div style="text-align:center;padding:8px"><div style="font-size:32px;">📄</div><div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:4px;">package.json</div></div>
-                  <div style="text-align:center;padding:8px"><div style="font-size:32px;">📁</div><div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:4px;">playground</div></div>
-                  <div style="text-align:center;padding:8px"><div style="font-size:32px;">📁</div><div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:4px;">scripts</div></div>
+                <div style="flex:1;padding:16px;display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-content:start;">
+                  <div style="text-align:center;padding:10px;"><div style="font-size:36px;">📁</div><div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">packages</div></div>
+                  <div style="text-align:center;padding:10px;"><div style="font-size:36px;">📁</div><div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">registry</div></div>
+                  <div style="text-align:center;padding:10px;"><div style="font-size:36px;">📁</div><div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">docs</div></div>
+                  <div style="text-align:center;padding:10px;"><div style="font-size:36px;">📁</div><div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">skills</div></div>
+                  <div style="text-align:center;padding:10px;"><div style="font-size:36px;">📄</div><div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">CLAUDE.md</div></div>
+                  <div style="text-align:center;padding:10px;"><div style="font-size:36px;">📄</div><div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">package.json</div></div>
+                  <div style="text-align:center;padding:10px;"><div style="font-size:36px;">📁</div><div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">playground</div></div>
+                  <div style="text-align:center;padding:10px;"><div style="font-size:36px;">📁</div><div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">scripts</div></div>
                 </div>
               </div>
-            </div>
-            <!-- macOS Dock -->
-            <div style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:6px;padding:6px 10px;border-radius:18px;background:rgba(40,40,50,0.55);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);">
-              <div style="width:44px;height:44px;border-radius:10px;background:rgba(0,122,255,0.4);display:flex;align-items:center;justify-content:center;font-size:22px;">📁</div>
-              <div style="width:44px;height:44px;border-radius:10px;background:rgba(120,120,130,0.3);display:flex;align-items:center;justify-content:center;font-size:22px;">🌐</div>
-              <div style="width:44px;height:44px;border-radius:10px;background:rgba(120,120,130,0.3);display:flex;align-items:center;justify-content:center;font-size:22px;">✉</div>
-              <div style="width:44px;height:44px;border-radius:10px;background:rgba(120,120,130,0.3);display:flex;align-items:center;justify-content:center;font-size:22px;">📅</div>
-              <div style="width:2px;height:44px;background:rgba(255,255,255,0.1);margin:0 2px;"></div>
-              <div style="width:44px;height:44px;border-radius:10px;background:rgba(120,120,130,0.3);display:flex;align-items:center;justify-content:center;font-size:22px;">⚙</div>
-              <div style="width:44px;height:44px;border-radius:10px;background:rgba(120,120,130,0.3);display:flex;align-items:center;justify-content:center;font-size:22px;">🎵</div>
-              <div style="width:44px;height:44px;border-radius:10px;background:rgba(120,120,130,0.3);display:flex;align-items:center;justify-content:center;font-size:18px;">▶</div>
             </div>
           
         </div>

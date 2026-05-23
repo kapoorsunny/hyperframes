@@ -295,13 +295,16 @@
         ),
       ).position.z = -6;
 
+      // Vibrant aurora-colored floor
       var floor = new THREE.Mesh(
         new THREE.PlaneGeometry(30, 30),
-        new THREE.MeshStandardMaterial({ color: 0x050508, metalness: 0.95, roughness: 0.18 }),
+        new THREE.MeshStandardMaterial({ color: 0x0a1530, metalness: 0.8, roughness: 0.25 }),
       );
       floor.rotation.x = -PI / 2;
       floor.position.y = -2.5;
       scene.add(floor);
+      // Aurora-tinted background
+      scene.background = new THREE.Color(0x0c0a20);
 
       scene.add(new THREE.AmbientLight(0x222233, 0.5));
       var kL = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -506,6 +509,7 @@
             child.material = new THREE.MeshBasicMaterial({ map: phoneTex });
           }
         });
+        glassLens.visible = false; // disabled — iOS 26 doesn't use the morphing lens
         scene.add(glassLens);
 
         phoneGrp.add(m);
@@ -672,6 +676,8 @@
         );
         lapGrp.rotation.set(S.lpRX, S.lpRY, S.lpRZ);
         turntable.rotation.y = S.turn;
+        // Glass lens disabled for iOS 26
+        glassLens.visible = false;
         // Single morphing glass — orbits around device edges, never overlaps screen
         var t = tl.time();
         var geoIdx = Math.floor(d * 0.8) % glassGeos.length;
