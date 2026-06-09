@@ -9,6 +9,20 @@ Recent HyperFrames releases, including user-facing features, fixes, and migratio
 {/* New release entries are prepended by `bun run changelog:draft <version> --write`. */}
 
 <Update
+  label="HyperFrames v0.6.84"
+  description="Released - 2026-06-09"
+  tags={["Release", "Core"]}
+>
+Completes the playbackRate fix across all media duration resolution sites — visibility, timeline payload, and auto-calculated duration now all respect `defaultPlaybackRate`.
+
+## Fixes
+
+- **Core:** Apply playbackRate to all media duration resolution sites ([908b455e](https://github.com/heygen-com/hyperframes/commit/908b455e5eed94f6c6d1e6a27b2a6c99a8032394), [#1288](https://github.com/heygen-com/hyperframes/pull/1288))
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.6.83...v0.6.84).
+</Update>
+
+<Update
   label="HyperFrames v0.6.83"
   description="Released - 2026-06-09"
   tags={["Release", "Core", "Producer", "Release"]}
