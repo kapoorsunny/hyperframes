@@ -57,9 +57,25 @@ Animate any custom property. Works for color, length, number — anything CSS wi
 
 ## Performance Rules
 
-### Prefer transforms and opacity
+### Animate transforms, not layout properties
 
-Animating `x`, `y`, `scale`, `rotation`, `opacity` stays on the GPU compositor. Avoid `width`, `height`, `top`, `left`, `margin`, `padding` when transforms achieve the same effect.
+Animate `x`, `y`, `scale`, `rotation`, `opacity`. Never animate `left`, `right`, `top`, `bottom`, `width`, `height`, `margin*` — and never `roundProps`.
+
+This is a **render-correctness** rule in HyperFrames, not just a GPU-performance nicety. The renderer seeks frame-by-frame and screenshots each frame, and the browser compositor snaps layout properties to whole device pixels. On a fast tween the per-frame step is several pixels, so the snap is invisible; on a slow tween or a long ease-out tail the value moves less than a pixel per frame — it holds the same pixel for several frames, then jumps a whole one. The result is motion that looks smooth when fast but visibly stutters when slow. Transforms interpolate sub-pixel and stay smooth at any speed. `roundProps` forces the same integer snap onto a transform — don't use it.
+
+**Convert a position animation to a transform** by leaving the element at its resting `left`/`top` in CSS and animating the _offset_ with `x`/`y`:
+
+```javascript
+// CSS: #card { left: 1340px; top: 540px }   ← resting position stays in CSS
+tl.to("#card", { left: 1340, top: 540, duration: 1 }); // ✗ stutters
+tl.fromTo("#card", { x: 640, y: 0 }, { x: 0, y: 0, duration: 1 }); // ✓ x/y = delta from CSS rest (640 = startLeft − 1340)
+```
+
+For a parent-relative `left: "100%"` sweep, use `xPercent: 100` only when the element is the full width of its container; otherwise convert to pixels (`x: containerWidth`).
+
+**The one exception:** elements drawn through the html-in-canvas API — those under a `<canvas layoutsubtree>` ancestor, e.g. the `liquid-glass-*` blocks. The canvas rasterizes from sub-pixel `getComputedStyle`, so layout props don't snap there and those elements keep `left`/`top`. Everything the browser lays out (plain DOM) follows the rule.
+
+The `gsap_non_transform_motion` lint rule is the backstop, not the teacher — reach for transforms from the start instead of animating layout props and waiting for lint to reject them.
 
 ### will-change (sparingly)
 
