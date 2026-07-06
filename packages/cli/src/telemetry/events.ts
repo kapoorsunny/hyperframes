@@ -308,6 +308,45 @@ export function trackBrowserInstall(): void {
   trackEvent("browser_install", {});
 }
 
+// Sign-in lifecycle. The CLI tracks command and render lifecycles but never
+// authentication, so `auth login` outcomes are invisible on the observability
+// dashboards — a completed sign-in, a browser flow the user abandoned, and a
+// rejected key all look identical (i.e. absent). These three events close that
+// gap so the sign-in funnel is measurable like the render funnel already is.
+// `method` is "oauth" (the default browser PKCE flow) or "api_key". No token,
+// key, identity, email, or free text is ever attached — only the method and a
+// low-cardinality outcome/reason.
+//
+// The three trackers accept an optional `distinctId`, forwarded to trackEvent
+// exactly like trackRenderComplete/trackRenderError already do. It is unused
+// today (events attribute to the install's anonymousId), but pre-plumbing it
+// makes attributing a completed sign-in to a resolved identity later a one-line
+// change at the callsite rather than a signature sweep.
+export type AuthLoginMethod = "oauth" | "api_key";
+export type AuthLoginFailureReason =
+  | "flow_error" // OAuth authorization/exchange threw a real error
+  | "flow_timeout" // OAuth callback wait elapsed (user closed the tab / walked away)
+  | "no_credential" // flow reported success but nothing was persisted
+  | "rejected" // backend rejected the supplied API key (401)
+  | "invalid_input" // key was empty, header-unsafe, or too short
+  | "aborted"; // prompt cancelled, or no key arrived on stdin before timeout
+
+export function trackAuthLoginStarted(method: AuthLoginMethod, distinctId?: string): void {
+  trackEvent("auth_login_started", { method }, distinctId);
+}
+
+export function trackAuthLoginCompleted(method: AuthLoginMethod, distinctId?: string): void {
+  trackEvent("auth_login_completed", { method }, distinctId);
+}
+
+export function trackAuthLoginFailed(
+  method: AuthLoginMethod,
+  reason: AuthLoginFailureReason,
+  distinctId?: string,
+): void {
+  trackEvent("auth_login_failed", { method, reason }, distinctId);
+}
+
 // A render was rejected by the output-resolution/alpha/HDR pre-flight (P1-3)
 // before any browser/ffmpeg work. Counts the "caught early" saves on dashboard
 // 1783183, distinct from deep render failures. `kind` is the low-cardinality
