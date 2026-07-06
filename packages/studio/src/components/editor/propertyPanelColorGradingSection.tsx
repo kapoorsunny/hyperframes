@@ -56,7 +56,11 @@ interface MediaMetadataResponse {
 }
 
 function stripQueryAndHash(value: string): string {
-  return value.replace(/[?#].*$/, "");
+  const queryIndex = value.indexOf("?");
+  const hashIndex = value.indexOf("#");
+  if (queryIndex < 0) return hashIndex < 0 ? value : value.slice(0, hashIndex);
+  if (hashIndex < 0) return value.slice(0, queryIndex);
+  return value.slice(0, Math.min(queryIndex, hashIndex));
 }
 
 function stripPreviewAssetPath(src: string, projectId: string): string | null {
