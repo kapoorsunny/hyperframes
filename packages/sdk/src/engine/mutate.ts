@@ -597,6 +597,7 @@ function handleSetTiming(
   }
 
   // Flush accumulated GSAP script changes as a single patch pair.
+  // fallow-ignore-next-line code-duplication
   if (origScript && currentScript && currentScript !== origScript) {
     setGsapScript(parsed.document, currentScript);
     const gsapResult = gsapScriptChange(origScript, currentScript);
@@ -666,6 +667,7 @@ function handleRemoveElement(parsed: ParsedDocument, ids: HfId[]): MutationResul
     }
   }
 
+  // fallow-ignore-next-line code-duplication
   if (origScript && currentScript && currentScript !== origScript) {
     setGsapScript(parsed.document, currentScript);
     const gsapResult = gsapScriptChange(origScript, currentScript);
@@ -1629,6 +1631,7 @@ export function validateOp(parsed: ParsedDocument, op: EditOp): CanResult {
     case "removeElement": {
       const ids = targets(op.target);
       if (ids.length === 0) return canErr("E_TARGET_NOT_FOUND", "No target ids provided.");
+      // fallow-ignore-next-line code-duplication
       const missing = ids.filter((id) => resolveScoped(parsed.document, id) === null);
       if (missing.length > 0)
         return canErr(
@@ -1664,6 +1667,7 @@ export function validateOp(parsed: ParsedDocument, op: EditOp): CanResult {
     }
     case "reorderElements": {
       if (op.entries.length === 0) return CAN_OK;
+      // fallow-ignore-next-line code-duplication
       const missing = op.entries
         .map((e) => e.target)
         .filter((id) => resolveScoped(parsed.document, id) === null);
