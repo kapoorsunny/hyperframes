@@ -330,6 +330,39 @@ test("--json returns error JSON on stub provider failure", () => {
   cleanup();
 });
 
+test("--doctor --json reports dependency checks and top-level ok requires ffmpeg and ffprobe", () => {
+  const result = spawnResolve(["--doctor", "--json"]);
+  assert.match(result.stdout.trim(), /^\{/);
+  assert.equal(result.stderr, "");
+  assert.ok(result.status === 0 || result.status === 1);
+
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.ok(Array.isArray(parsed.checks));
+
+  const expected = [
+    "heygen on PATH",
+    "heygen version",
+    "heygen authenticated",
+    "ffmpeg on PATH",
+    "ffprobe on PATH",
+    "node version",
+  ];
+  const byName = new Map(parsed.checks.map((check) => [check.name, check]));
+  for (const name of expected) {
+    assert.ok(byName.has(name), `missing check: ${name}`);
+    const check = byName.get(name);
+    assert.equal(typeof check.ok, "boolean", `${name}.ok`);
+    assert.equal(typeof check.detail, "string", `${name}.detail`);
+    assert.ok("fix" in check, `${name}.fix`);
+  }
+
+  const ffmpeg = byName.get("ffmpeg on PATH");
+  const ffprobe = byName.get("ffprobe on PATH");
+  const strictOk = ffmpeg.ok && ffprobe.ok;
+  assert.equal(parsed.ok, strictOk);
+  assert.equal(result.status, strictOk ? 0 : 1);
+});
+
 test("one-line output format matches contract", () => {
   setup();
   const record = makeRecord({ provenance: { prompt: "format test", provider: "test" } });

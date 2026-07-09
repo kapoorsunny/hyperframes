@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { spawnSync } from "node:child_process";
 import { existsSync, statSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { resolve, join, extname, basename } from "node:path";
 import { parseArgs } from "node:util";
@@ -21,6 +22,19 @@ import {
   isLibraryLutOfflineMiss,
   matchColorLook,
 } from "./lib/lut-preset-provider.mjs";
+import {
+  HEYGEN_AUTH_COMMAND,
+  HEYGEN_INSTALL_COMMAND,
+  HEYGEN_MIN_VERSION,
+  HEYGEN_UPDATE_COMMAND,
+  firstSemver,
+  versionLessThan,
+} from "./lib/heygen-cli.mjs";
+
+// resolve shells `fetch`/`freezeUrl` and modern ESM; 18 is the floor where those
+// exist without flags. Named so the --doctor node check verifies something real
+// (O2). Declared before the top-level `--doctor` branch that calls runDoctor().
+const MIN_NODE_VERSION = "18.0.0";
 
 const { values: args } = parseArgs({
   options: {
@@ -30,6 +44,7 @@ const { values: args } = parseArgs({
     project: { type: "string", short: "p", default: "." },
     adopt: { type: "boolean", default: false },
     candidates: { type: "boolean", default: false },
+    doctor: { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
     reuse: { type: "string" },
     from: { type: "string" },
@@ -59,6 +74,7 @@ Options:
   --adopt         Adopt all existing assets/ files into the manifest
   --candidates    List reusable assets (project + global cache) for --type; no
                   download, no mutation. Read them and decide reuse yourself.
+  --doctor        Check local CLI dependencies; no manifest changes.
   --reuse <sha>   Import a specific global-cache asset (by content sha/prefix,
                   from --candidates) into this project
   --from <file>   Freeze a local file or direct public URL (ingest)
@@ -97,6 +113,25 @@ if (args.adopt) {
 if (args.candidates || args["dry-run"]) {
   await showCandidates();
   process.exit(0);
+}
+
+if (args.doctor) {
+  const doctor = runDoctor();
+  const failed = doctor.checks.filter((check) => !check.ok);
+  // Non-PII: instrument the exact question the feature exists to answer — how
+  // often is --doctor run and which check fails most. Awaited so a short-lived
+  // run flushes before exit.
+  await track("media_use_doctor_run", {
+    ok: doctor.ok,
+    checks_failed: failed.length,
+    failed: failed.map((check) => check.name),
+  });
+  if (args.json) {
+    console.log(JSON.stringify({ ok: doctor.ok, checks: doctor.checks }));
+  } else {
+    printDoctor(doctor.checks);
+  }
+  process.exit(doctor.ok ? 0 : 1);
 }
 
 // Reuse: import a specific global-cache asset (by content sha/prefix, taken
@@ -706,6 +741,193 @@ async function showCandidates() {
     console.log(JSON.stringify({ ok: true, candidates, truncated, total, similar }));
   } else {
     console.log(formatCandidates(candidates, { truncated, total }));
+  }
+}
+
+// Best-effort latest stable CLI tag from the CDN (the install script's source of
+// truth). null on any failure (offline, no curl) — treated as "unknown", never fatal.
+function latestHeygenStable() {
+  const probe = runCommand("curl", [
+    "-fsSL",
+    "--max-time",
+    "4",
+    "https://static.heygen.ai/cli/stable",
+  ]);
+  return probe.status === 0 ? firstSemver(commandText(probe)) : null;
+}
+
+function heygenAuthCheck() {
+  // `heygen auth status` already emits JSON by default (only `--human` opts out
+  // to a table) — there is no `--json`/`--output` flag; passing one errors with
+  // "unknown flag". emailFromAuthStatus parses that default JSON.
+  // NOTE: JSON-by-default is a v0.3.0 behavior — this probe assumes it, which
+  // HEYGEN_MIN_VERSION >= 0.3.0 (+ the version gate above) guarantees. If that
+  // floor is ever lowered, auth detection on an older CLI would silently break.
+  const authProbe = runCommand("heygen", ["auth", "status"]);
+  // spawnSync sets .error/.signal on a timeout or spawn failure (status then
+  // null). A stalled auth endpoint (transient network/DNS) must not be reported
+  // as an authoritative "not authenticated" with a re-login fix.
+  const timedOut = authProbe.error?.code === "ETIMEDOUT" || authProbe.signal != null;
+  const email = authProbe.status === 0 ? emailFromAuthStatus(commandText(authProbe)) : null;
+  return {
+    name: "heygen authenticated",
+    ok: !!email,
+    detail: email
+      ? `heygen authenticated as ${email}`
+      : timedOut
+        ? "heygen auth status timed out — possible network issue, not proof of sign-out"
+        : "heygen not authenticated",
+    fix: email ? "" : timedOut ? "check network, then re-run --doctor" : HEYGEN_AUTH_COMMAND,
+  };
+}
+
+function runDoctor() {
+  const checks = [];
+  const heygenVersionProbe = runCommand("heygen", ["--version"]);
+  const heygenOnPath = heygenVersionProbe.status === 0;
+  const heygenVersionText = commandText(heygenVersionProbe);
+  const heygenVersion = firstSemver(heygenVersionText);
+
+  checks.push({
+    name: "heygen on PATH",
+    ok: heygenOnPath,
+    // Just "is the binary here" — the version row below owns the version string,
+    // so this row must not also render `heygen v0.3.0` (two byte-identical lines).
+    detail: heygenOnPath ? "heygen found on PATH" : "heygen not found",
+    fix: heygenOnPath ? "" : HEYGEN_INSTALL_COMMAND,
+  });
+
+  if (!heygenOnPath) {
+    checks.push({
+      name: "heygen version",
+      ok: false,
+      detail: "heygen version unavailable",
+      fix: HEYGEN_INSTALL_COMMAND,
+    });
+    checks.push({
+      name: "heygen authenticated",
+      ok: false,
+      detail: "heygen auth status unavailable",
+      fix: HEYGEN_INSTALL_COMMAND,
+    });
+  } else if (heygenVersion) {
+    const versionOk = !versionLessThan(heygenVersion, HEYGEN_MIN_VERSION);
+    // Keep it latest: even when the installed version clears the floor, nudge
+    // `heygen update` if a newer stable exists. Best-effort — silently skipped
+    // when the CDN is unreachable, so it never blocks the check.
+    const latest = versionOk ? latestHeygenStable() : null;
+    const behind = latest && versionLessThan(heygenVersion, latest);
+    checks.push({
+      name: "heygen version",
+      ok: versionOk,
+      detail: versionOk
+        ? `heygen v${heygenVersion}${behind ? ` (latest v${latest} available)` : ""}`
+        : `heygen v${heygenVersion} (need >= v${HEYGEN_MIN_VERSION})`,
+      fix: versionOk ? (behind ? HEYGEN_UPDATE_COMMAND : "") : HEYGEN_UPDATE_COMMAND,
+    });
+
+    // Below the OAuth-capable floor the auth probe fails for the SAME root cause
+    // (an old CLI can't OAuth and doesn't emit JSON auth status), which would
+    // read as a confusing second "not authenticated" error. Skip it — one root
+    // cause, one fix.
+    checks.push(
+      versionOk
+        ? heygenAuthCheck()
+        : {
+            name: "heygen authenticated",
+            ok: false,
+            detail: "skipped — update heygen first",
+            fix: HEYGEN_UPDATE_COMMAND,
+          },
+    );
+  } else {
+    // Fail-open: heygen ran but printed no semver (dev/stripped build). We can't
+    // verify the version, so we don't block on it — but say so rather than a bare
+    // green check that implies a real version comparison happened.
+    checks.push({
+      name: "heygen version",
+      ok: true,
+      detail: "heygen present; version unverifiable (no semver in --version output)",
+      fix: "",
+    });
+
+    checks.push(heygenAuthCheck());
+  }
+
+  const ffmpegProbe = runCommand("ffmpeg", ["-version"]);
+  checks.push({
+    name: "ffmpeg on PATH",
+    ok: ffmpegProbe.status === 0,
+    detail: ffmpegProbe.status === 0 ? firstLine(ffmpegProbe.stdout) : "ffmpeg not found",
+    fix: ffmpegProbe.status === 0 ? "" : "brew install ffmpeg",
+  });
+
+  const ffprobeProbe = runCommand("ffprobe", ["-version"]);
+  checks.push({
+    name: "ffprobe on PATH",
+    ok: ffprobeProbe.status === 0,
+    detail: ffprobeProbe.status === 0 ? firstLine(ffprobeProbe.stdout) : "ffprobe not found",
+    fix: ffprobeProbe.status === 0 ? "" : "brew install ffmpeg",
+  });
+
+  const nodeOk = !versionLessThan(process.versions.node, MIN_NODE_VERSION);
+  checks.push({
+    name: "node version",
+    ok: nodeOk,
+    detail: `${process.version} (need >= v${MIN_NODE_VERSION})`,
+    fix: nodeOk ? "" : `upgrade Node to >= v${MIN_NODE_VERSION}`,
+  });
+
+  // ffmpeg AND ffprobe are both strictly required (see SKILL.md); the exit code
+  // must reflect that so a script gating on `--doctor` doesn't pass with ffprobe
+  // missing and then break at the first probe call.
+  const ffmpeg = checks.find((check) => check.name === "ffmpeg on PATH");
+  const ffprobe = checks.find((check) => check.name === "ffprobe on PATH");
+  return { ok: !!ffmpeg?.ok && !!ffprobe?.ok, checks };
+}
+
+function printDoctor(checks) {
+  const heygenChecks = new Set(["heygen on PATH", "heygen version", "heygen authenticated"]);
+  for (const check of checks) {
+    const prefix = check.ok ? "✓" : "✗";
+    const freePath = heygenChecks.has(check.name)
+      ? " — free-usage path: bgm/image/voice/avatar-video"
+      : "";
+    const fix = check.ok || !check.fix ? "" : ` — fix: ${check.fix}`;
+    console.log(`${prefix} ${check.detail}${freePath}${fix}`);
+  }
+}
+
+function runCommand(bin, argv) {
+  return spawnSync(bin, argv, {
+    encoding: "utf8",
+    timeout: 15000,
+  });
+}
+
+function commandText(result) {
+  return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+}
+
+function firstLine(text) {
+  return (
+    String(text || "")
+      .trim()
+      .split(/\r?\n/)[0] || ""
+  );
+}
+
+function emailFromAuthStatus(text) {
+  // JSON only (auth status emits JSON by default). No prose regex fallback: a
+  // human-format body like "Session expired. Contact support@heygen.ai" would
+  // otherwise report the user as authenticated as support@heygen.ai.
+  const trimmed = String(text || "").trim();
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed?.data?.email || parsed?.email || null;
+  } catch {
+    return null;
   }
 }
 
