@@ -29,6 +29,7 @@ import {
   formatTimelineAttributeNumber,
   shiftGsapPositions,
   scaleGsapPositions,
+  finishTimelineTimingFallback,
   extendRootDurationIfNeeded,
   buildTimelineMoveTimingPatch,
   buildTimelineResizeTimingPatch,
@@ -149,22 +150,25 @@ export function useTimelineEditing({
         return buildTimelineMoveTimingPatch(original, target, updates.start, element.duration);
       };
       // Server-path fallback (no SDK session): persist the attr patch, then
-      // shift GSAP tween positions on the server and reload the preview — the
-      // SDK path folds both into setTiming, but the fallback must do them
-      // explicitly or the clip moves while its GSAP tweens stay put + the
-      // preview never refreshes. coalesceKey mirrors the SDK branch so undo
-      // granularity is identical on either path.
+      // shift GSAP tween positions on the server. Extending edits can keep the
+      // iframe live unless a GSAP source rewrite needs a fresh run.
       const coalesceKey = `timeline-move:${element.hfId ?? element.id}`;
       const moveFallback = () =>
         enqueueEdit(element, "Move timeline clip", buildMovePatches, coalesceKey).then(() => {
           const pid = projectIdRef.current;
           const delta = updates.start - element.start;
-          if (delta !== 0 && element.domId && pid) {
-            return shiftGsapPositions(pid, targetPath, element.domId, delta)
-              .then(() => reloadPreview())
-              .catch((err) => console.error("[Timeline] Failed to shift GSAP positions", err));
-          }
-          return reloadPreview();
+          const domId = element.domId;
+          return finishTimelineTimingFallback({
+            iframe: previewIframeRef.current,
+            needsExtension,
+            rootDurationSeconds: updates.start + element.duration,
+            reloadPreview,
+            gsapMutation:
+              delta !== 0 && domId && pid
+                ? () => shiftGsapPositions(pid, targetPath, domId, delta)
+                : undefined,
+            onGsapError: (err) => console.error("[Timeline] Failed to shift GSAP positions", err),
+          });
         });
       const needsExtension = extendRootDurationIfNeeded(updates.start + element.duration);
       if (sdkSession && element.hfId && !needsExtension) {
@@ -238,10 +242,8 @@ export function useTimelineEditing({
         updates.playbackStart != null ||
         (updates.start !== element.start && element.playbackStart != null);
       // Server-path fallback: after persisting the attr patch, scale GSAP tween
-      // positions/durations on the server and reload the preview. The SDK path
-      // folds both into setTiming; the fallback must do them explicitly or the
-      // clip resizes while its GSAP tweens keep their old timing + the preview
-      // never refreshes. coalesceKey mirrors the SDK branch for undo parity.
+      // positions/durations on the server. Extending edits can keep the iframe
+      // live unless a GSAP source rewrite needs a fresh run.
       const coalesceKey = `timeline-resize:${element.hfId ?? element.id}`;
       const timingChanged =
         updates.start !== element.start || updates.duration !== element.duration;
@@ -249,20 +251,27 @@ export function useTimelineEditing({
       const resizeFallback = () =>
         enqueueEdit(element, "Resize timeline clip", buildResizePatches, coalesceKey).then(() => {
           const pid = projectIdRef.current;
-          if (timingChanged && element.domId && pid) {
-            return scaleGsapPositions(
-              pid,
-              targetPath,
-              element.domId,
-              element.start,
-              element.duration,
-              updates.start,
-              updates.duration,
-            )
-              .then(() => reloadPreview())
-              .catch((err) => console.error("[Timeline] Failed to scale GSAP positions", err));
-          }
-          return reloadPreview();
+          const domId = element.domId;
+          return finishTimelineTimingFallback({
+            iframe: previewIframeRef.current,
+            needsExtension,
+            rootDurationSeconds: updates.start + updates.duration,
+            reloadPreview,
+            gsapMutation:
+              timingChanged && domId && pid
+                ? () =>
+                    scaleGsapPositions(
+                      pid,
+                      targetPath,
+                      domId,
+                      element.start,
+                      element.duration,
+                      updates.start,
+                      updates.duration,
+                    )
+                : undefined,
+            onGsapError: (err) => console.error("[Timeline] Failed to scale GSAP positions", err),
+          });
         });
       if (sdkSession && element.hfId && !hasPbsAdjustment && !needsExtension) {
         return sdkTimingPersist(

@@ -190,6 +190,23 @@ export function patchIframeDomTiming(
   }
 }
 
+export function postRootDurationToPreview(
+  iframe: HTMLIFrameElement | null,
+  durationSeconds: number,
+): void {
+  const duration = Number(durationSeconds);
+  if (!Number.isFinite(duration) || duration <= 0) return;
+  iframe?.contentWindow?.postMessage(
+    {
+      source: "hf-parent",
+      type: "control",
+      action: "set-root-duration",
+      durationSeconds: duration,
+    },
+    "*",
+  );
+}
+
 // fallow-ignore-next-line complexity
 function resolveResizePlaybackStart(
   original: string,
@@ -317,6 +334,47 @@ export async function readFileContent(projectId: string, targetPath: string): Pr
   return data.content;
 }
 
+export type GsapMutationStatus = { mutated: boolean };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readMutationStatus(value: unknown): GsapMutationStatus {
+  if (!isRecord(value)) return { mutated: false };
+  return { mutated: value.mutated === true || value.changed === true };
+}
+
+function readMutationError(value: unknown, fallback: string): string {
+  if (isRecord(value) && typeof value.error === "string") return value.error;
+  return fallback;
+}
+
+export async function finishTimelineTimingFallback(input: {
+  iframe: HTMLIFrameElement | null;
+  needsExtension: boolean;
+  rootDurationSeconds: number;
+  reloadPreview: () => void;
+  gsapMutation?: () => Promise<GsapMutationStatus>;
+  onGsapError: (error: unknown) => void;
+}): Promise<void> {
+  let gsapMutated = false;
+  if (input.gsapMutation) {
+    try {
+      gsapMutated = (await input.gsapMutation()).mutated;
+    } catch (error) {
+      input.onGsapError(error);
+      return;
+    }
+  }
+  if (input.needsExtension) {
+    postRootDurationToPreview(input.iframe, input.rootDurationSeconds);
+    if (gsapMutated) input.reloadPreview();
+    return;
+  }
+  input.reloadPreview();
+}
+
 /**
  * Shift all GSAP animation positions targeting a given element by a time delta.
  * Calls the server-side GSAP mutation endpoint which uses the AST-based parser.
@@ -326,8 +384,8 @@ export async function shiftGsapPositions(
   filePath: string,
   elementId: string,
   delta: number,
-): Promise<void> {
-  if (delta === 0 || !elementId) return;
+): Promise<GsapMutationStatus> {
+  if (delta === 0 || !elementId) return { mutated: false };
   const res = await fetch(
     `/api/projects/${projectId}/gsap-mutations/${encodeURIComponent(filePath)}`,
     {
@@ -342,8 +400,9 @@ export async function shiftGsapPositions(
   );
   if (!res.ok) {
     const err = await res.json().catch(() => null);
-    throw new Error((err as { error?: string })?.error ?? "shift-positions failed");
+    throw new Error(readMutationError(err, "shift-positions failed"));
   }
+  return readMutationStatus(await res.json().catch(() => null));
 }
 
 export async function scaleGsapPositions(
@@ -354,9 +413,9 @@ export async function scaleGsapPositions(
   oldDuration: number,
   newStart: number,
   newDuration: number,
-): Promise<void> {
-  if (!elementId || oldDuration <= 0 || newDuration <= 0) return;
-  if (oldStart === newStart && oldDuration === newDuration) return;
+): Promise<GsapMutationStatus> {
+  if (!elementId || oldDuration <= 0 || newDuration <= 0) return { mutated: false };
+  if (oldStart === newStart && oldDuration === newDuration) return { mutated: false };
   const res = await fetch(
     `/api/projects/${projectId}/gsap-mutations/${encodeURIComponent(filePath)}`,
     {
@@ -374,8 +433,9 @@ export async function scaleGsapPositions(
   );
   if (!res.ok) {
     const err = await res.json().catch(() => null);
-    throw new Error((err as { error?: string })?.error ?? "scale-positions failed");
+    throw new Error(readMutationError(err, "scale-positions failed"));
   }
+  return readMutationStatus(await res.json().catch(() => null));
 }
 
 // Re-export applyPatchByTarget for use in the hook (avoids double import in callers)

@@ -230,12 +230,18 @@ describe("useTimelineEditing timeline z-index reorder", () => {
     const writeProjectFile = vi.fn<(...args: unknown[]) => Promise<void>>(async () => {});
     const recordEdit = vi.fn(async () => {});
     const forceReloadSdkSession = vi.fn();
+    const reloadPreview = vi.fn();
+    const iframeWindow = iframe.contentWindow;
+    if (!iframeWindow) throw new Error("Expected iframe window");
+    const postMessageSpy = vi.spyOn(iframeWindow, "postMessage");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: Parameters<typeof fetch>[0]): Promise<Response> => {
         const url = requestUrl(input);
         if (url.includes("/api/projects/p1/files/")) return jsonResponse({ content: source });
-        if (url.includes("/api/projects/p1/gsap-mutations/")) return jsonResponse({ ok: true });
+        if (url.includes("/api/projects/p1/gsap-mutations/")) {
+          return jsonResponse({ ok: true, mutated: false });
+        }
         throw new Error(`Unexpected fetch: ${url}`);
       }),
     );
@@ -249,6 +255,7 @@ describe("useTimelineEditing timeline z-index reorder", () => {
       recordEdit,
       sdkSession,
       forceReloadSdkSession,
+      reloadPreview,
     });
 
     await act(async () => {
@@ -262,6 +269,16 @@ describe("useTimelineEditing timeline z-index reorder", () => {
     expect(writeProjectFile.mock.calls[0]![1]).toContain('data-start="3"');
     expect(usePlayerStore.getState().duration).toBe(5);
     expect(forceReloadSdkSession).toHaveBeenCalledTimes(1);
+    expect(reloadPreview).not.toHaveBeenCalled();
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      {
+        source: "hf-parent",
+        type: "control",
+        action: "set-root-duration",
+        durationSeconds: 5,
+      },
+      "*",
+    );
 
     unmount();
   });
@@ -279,12 +296,18 @@ describe("useTimelineEditing timeline z-index reorder", () => {
     const writeProjectFile = vi.fn<(...args: unknown[]) => Promise<void>>(async () => {});
     const recordEdit = vi.fn(async () => {});
     const forceReloadSdkSession = vi.fn();
+    const reloadPreview = vi.fn();
+    const iframeWindow = iframe.contentWindow;
+    if (!iframeWindow) throw new Error("Expected iframe window");
+    const postMessageSpy = vi.spyOn(iframeWindow, "postMessage");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: Parameters<typeof fetch>[0]): Promise<Response> => {
         const url = requestUrl(input);
         if (url.includes("/api/projects/p1/files/")) return jsonResponse({ content: source });
-        if (url.includes("/api/projects/p1/gsap-mutations/")) return jsonResponse({ ok: true });
+        if (url.includes("/api/projects/p1/gsap-mutations/")) {
+          return jsonResponse({ ok: true, mutated: false });
+        }
         throw new Error(`Unexpected fetch: ${url}`);
       }),
     );
@@ -298,6 +321,7 @@ describe("useTimelineEditing timeline z-index reorder", () => {
       recordEdit,
       sdkSession,
       forceReloadSdkSession,
+      reloadPreview,
     });
 
     await act(async () => {
@@ -311,6 +335,16 @@ describe("useTimelineEditing timeline z-index reorder", () => {
     expect(writeProjectFile.mock.calls[0]![1]).toContain('data-duration="5"></div>');
     expect(usePlayerStore.getState().duration).toBe(5);
     expect(forceReloadSdkSession).toHaveBeenCalledTimes(1);
+    expect(reloadPreview).not.toHaveBeenCalled();
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      {
+        source: "hf-parent",
+        type: "control",
+        action: "set-root-duration",
+        durationSeconds: 5,
+      },
+      "*",
+    );
 
     unmount();
   });

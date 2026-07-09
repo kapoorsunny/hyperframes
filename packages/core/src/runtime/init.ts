@@ -1852,6 +1852,7 @@ export function initSandboxRuntimeModular(): void {
   // transport tick. A plain count misses same-count swaps (one sub-comp unloads
   // as another loads), so the signature keys on id+tag in document order.
   let clipTreeSignature = "";
+  let liveRootDurationOverrideSeconds = 0;
   const computeClipTreeSignature = (): string => {
     let sig = "";
     for (const el of document.querySelectorAll("[data-start]")) {
@@ -1902,6 +1903,30 @@ export function initSandboxRuntimeModular(): void {
 
     postRuntimeMessage(payload);
     scheduleRootStageLayoutDiagnostics();
+  };
+
+  const finitePositiveDuration = (value: number): number =>
+    Number.isFinite(value) && value > 0 ? value : 0;
+
+  const growRootDurationLive = (durationSeconds: number) => {
+    const nextDuration = finitePositiveDuration(Number(durationSeconds));
+    if (nextDuration <= 0) return;
+    const rootEl = resolveRootCompositionElement();
+    const rootAttrDuration = finitePositiveDuration(
+      Number.parseFloat(rootEl?.getAttribute("data-duration") ?? ""),
+    );
+    const currentDuration = Math.max(
+      liveRootDurationOverrideSeconds,
+      finitePositiveDuration(clock.getDuration()),
+      rootAttrDuration,
+    );
+    if (nextDuration <= currentDuration) return;
+
+    liveRootDurationOverrideSeconds = nextDuration;
+    rootEl?.setAttribute("data-duration", String(nextDuration));
+    clock.setDuration(nextDuration);
+    postTimeline();
+    postState(true);
   };
 
   const runAdapters = (method: "discover" | "pause" | "play", timeSeconds = 0) => {
@@ -2193,6 +2218,7 @@ export function initSandboxRuntimeModular(): void {
       if (state.transportClock) state.transportClock.setRate(state.playbackRate);
       applyWebAudioRate();
     },
+    onSetRootDuration: growRootDurationLive,
     onSetColorGrading: (target, grading) => {
       colorGrading.setGrading(target, grading);
     },
