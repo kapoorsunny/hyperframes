@@ -87,6 +87,22 @@ export function generateTicks(
   return { major, minor };
 }
 
+/**
+ * Ticks spanning the full visible ruler width, not just the composition, so a
+ * zoomed-out ruler stays filled with labels instead of ending mid-panel. The
+ * major/minor interval is driven by pixelsPerSecond (pixel spacing), so widening
+ * the range keeps spacing identical — it only adds ticks past the content end.
+ */
+export function generateVisibleTicks(
+  effectiveDuration: number,
+  pixelsPerSecond: number,
+  viewportWidth: number,
+  gutter: number,
+): { major: number[]; minor: number[] } {
+  const visible = viewportWidth > gutter ? (viewportWidth - gutter) / pixelsPerSecond : 0;
+  return generateTicks(Math.max(effectiveDuration, visible), pixelsPerSecond);
+}
+
 export function formatTimelineTickLabel(time: number, duration: number, majorInterval: number) {
   if (!Number.isFinite(time)) return "0:00";
   const safeTime = Math.max(0, time);

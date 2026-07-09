@@ -27,7 +27,7 @@ import { buildStackingTimelineLayers, insertPreviewTrackOrder } from "./timeline
 import { getTimelineLayerGroupHeaderTotalHeight } from "./TimelineLayerGroupHeader";
 import {
   GUTTER,
-  generateTicks,
+  generateVisibleTicks,
   getTimelineCanvasHeight,
   shouldShowTimelineShortcutHint,
   computeTimelineBasisDuration,
@@ -362,8 +362,8 @@ export const Timeline = memo(function Timeline({
   });
 
   const { major, minor } = useMemo(
-    () => generateTicks(effectiveDuration, pps),
-    [effectiveDuration, pps],
+    () => generateVisibleTicks(effectiveDuration, pps, viewportWidth, GUTTER),
+    [effectiveDuration, pps, viewportWidth],
   );
   const majorTickInterval = major.length >= 2 ? major[1] - major[0] : effectiveDuration;
 
