@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { trackCheckReport } from "../telemetry/events.js";
+import { trackCheckReport, trackCommandFailure } from "../telemetry/events.js";
 import { getRunId } from "../telemetry/runId.js";
 import type { ProjectDir } from "./project.js";
 import { lintProject, shouldBlockRender, type ProjectLintResult } from "./lintProject.js";
@@ -518,7 +518,10 @@ export async function runCheckPipeline(
   try {
     lintResult = await dependencies.lintProject(project.dir);
   } catch (error) {
-    return failureReport(options, runtimeFailure(error));
+    // The linter itself crashed (unreadable file, internal error) — distinct
+    // from lint findings; a runtime-failure code would send the agent hunting
+    // for a script problem that doesn't exist.
+    return failureReport(options, runtimeFailure(error, "check_lint_failure"));
   }
 
   const lint = buildLintSection(lintResult);
@@ -589,7 +592,11 @@ async function withFindingCrops(
   try {
     const findingFiles = await dependencies.captureFindingCrops(project, options, cropRequests);
     return { ...report, snapshots: { ...report.snapshots, findingFiles } };
-  } catch {
+  } catch (error) {
+    // Still non-gating, but observable: rollouts need the crop-failure rate
+    // (a second Chrome launch failing/timing out) without failing the run.
+    console.error("   finding crops skipped: " + normalizeErrorMessage(error));
+    trackCommandFailure("check-finding-crops", error);
     return report;
   }
 }

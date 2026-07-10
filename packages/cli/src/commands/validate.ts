@@ -132,7 +132,7 @@ export function raceMediaReady(
  * the live page to read each element's intrinsic `.duration`, which static lint
  * can't see.
  */
-async function auditClipDurations(
+export async function auditClipDurations(
   page: import("puppeteer-core").Page,
   analyzeClipMediaFit: typeof import("@hyperframes/engine").analyzeClipMediaFit,
   extraWaitMs: number,

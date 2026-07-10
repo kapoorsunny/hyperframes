@@ -12,7 +12,7 @@ import {
   seekCompositionTimeline,
   waitForPreferredSeekTarget,
 } from "../capture/captureCompositionFrame.js";
-import { shouldIgnoreRequestFailure } from "../commands/validate.js";
+import { auditClipDurations, shouldIgnoreRequestFailure } from "../commands/validate.js";
 import { loadBrowserScript } from "../commands/layout.js";
 import { normalizeErrorMessage } from "./errorMessage.js";
 import { ambiguousIssue, type MotionFrame } from "./motionAudit.js";
@@ -109,6 +109,15 @@ export async function runBrowserCheck(
 
     const rootAnchor = await resolveRootAnchor(page);
     const launchSettleMs = Date.now() - launchSettleStart;
+    // validate's per-media-element audit, kept in the consolidation: a clip
+    // whose intrinsic duration is meaningfully shorter than its data-duration
+    // slot silently shortens the slot at render time — invisible to lint (no
+    // intrinsic durations statically) and to the runtime listeners (nothing
+    // errors). The session is already open, so this is one extra evaluate.
+    const { analyzeClipMediaFit } = await import("@hyperframes/engine");
+    for (const entry of await auditClipDurations(page, analyzeClipMediaFit, options.timeout)) {
+      drafts.push({ code: "clip_media_fit", severity: entry.level, message: entry.text, time: 0 });
+    }
     const driver = createPageDriver(page, (time) => {
       currentTime = time;
     });

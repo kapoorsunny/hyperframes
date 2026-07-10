@@ -26,6 +26,13 @@ vi.mock("../capture/captureCompositionFrame.js", async (importOriginal) => ({
   waitForPreferredSeekTarget: vi.fn(async () => undefined),
 }));
 
+vi.mock("../commands/validate.js", async (importOriginal) => ({
+  // Partial mock: shouldIgnoreRequestFailure stays real; the clip audit is
+  // faked so tests control its findings without loading real media.
+  ...(await importOriginal<typeof import("../commands/validate.js")>()),
+  auditClipDurations: vi.fn(async () => [] as Array<{ level: "error" | "warning"; text: string }>),
+}));
+
 vi.mock("./staticProjectServer.js", () => ({
   serveStaticProjectHtml: vi.fn(async () => ({
     url: "http://127.0.0.1:3000",
@@ -204,6 +211,39 @@ it("round-trips the browser script's raw contrast candidates back into finish", 
     expect(typeof bbox.w).toBe("number");
     expect(typeof bbox.h).toBe("number");
   }
+});
+
+it("carries validate's clip-duration audit into the runtime findings", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(100);
+  document.body.innerHTML = `
+    <div data-composition-id="main" data-duration="10" data-width="640" data-height="360"></div>
+  `;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 640 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 360 });
+  const validateModule = await import("../commands/validate.js");
+  vi.mocked(validateModule.auditClipDurations).mockResolvedValue([
+    {
+      level: "warning",
+      text: "Audio is 22.10s but its slot (data-duration) is 30.00s — the slot is shortened to the media length when rendered.",
+    },
+  ]);
+  const page = fakePage();
+  installSessionMock(page);
+
+  const result = await runBrowserCheck(
+    PROJECT,
+    { ...DEFAULT_CHECK_OPTIONS, samples: 1, contrast: false },
+    { kind: "none" },
+    runAuditGrid,
+  );
+
+  expect(result.runtimeFindings).toEqual([
+    expect.objectContaining({
+      code: "clip_media_fit",
+      severity: "warning",
+      message: expect.stringContaining("slot is shortened"),
+    }),
+  ]);
 });
 
 describe("captureOverviewShot", () => {
