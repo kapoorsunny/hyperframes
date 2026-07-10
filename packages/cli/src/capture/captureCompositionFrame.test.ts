@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureRegionCrop,
   clampCropRegion,
+  installPageFunctionGuard,
   padCropRegion,
   parseZoomTarget,
   resolveCliChromeGpuMode,
