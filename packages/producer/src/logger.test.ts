@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createConsoleLogger, defaultLogger } from "./logger.js";
 import type { LogLevel, ProducerLogger } from "./logger.js";
 
 describe("createConsoleLogger", () => {
-  // We capture calls to console.{log,warn,error} via `mock` so we can
+  // We capture calls to console.{log,warn,error} via `vi.fn` so we can
   // assert what would have been printed without polluting test output.
-  let logSpy: ReturnType<typeof mock>;
-  let warnSpy: ReturnType<typeof mock>;
-  let errorSpy: ReturnType<typeof mock>;
+  let logSpy: ReturnType<typeof vi.fn>;
+  let warnSpy: ReturnType<typeof vi.fn>;
+  let errorSpy: ReturnType<typeof vi.fn>;
   let origLog: typeof console.log;
   let origWarn: typeof console.warn;
   let origError: typeof console.error;
@@ -16,9 +16,9 @@ describe("createConsoleLogger", () => {
     origLog = console.log;
     origWarn = console.warn;
     origError = console.error;
-    logSpy = mock(() => {});
-    warnSpy = mock(() => {});
-    errorSpy = mock(() => {});
+    logSpy = vi.fn();
+    warnSpy = vi.fn();
+    errorSpy = vi.fn();
     console.log = logSpy as unknown as typeof console.log;
     console.warn = warnSpy as unknown as typeof console.warn;
     console.error = errorSpy as unknown as typeof console.error;
@@ -30,6 +30,43 @@ describe("createConsoleLogger", () => {
     console.error = origError;
   });
 
+  // All four levels are stderr-bound (console.error/console.warn); console.log
+  // (stdout) must never be touched, since producer runs inside CLI commands
+  // whose stdout is a machine-readable contract (e.g. `validate --json`).
+  describe("stdout/stderr routing", () => {
+    it("info and debug write to console.error (stderr), never console.log (stdout)", () => {
+      const log = createConsoleLogger("debug");
+      log.info("info-msg");
+      log.debug("debug-msg");
+
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(errorSpy.mock.calls.map((c) => c[0])).toEqual([
+        "[INFO] info-msg",
+        "[DEBUG] debug-msg",
+      ]);
+    });
+
+    it("warn and error keep their pre-existing channels (console.warn / console.error)", () => {
+      const log = createConsoleLogger("debug");
+      log.warn("warn-msg");
+      log.error("error-msg");
+
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(warnSpy.mock.calls[0]?.[0]).toBe("[WARN] warn-msg");
+      expect(errorSpy.mock.calls[0]?.[0]).toBe("[ERROR] error-msg");
+    });
+
+    it("console.log is never called at any level", () => {
+      const log = createConsoleLogger("debug");
+      log.debug("d");
+      log.info("i");
+      log.warn("w");
+      log.error("e");
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe("level filtering", () => {
     it("level=info drops debug, keeps info/warn/error", () => {
       const log = createConsoleLogger("info");
@@ -38,12 +75,12 @@ describe("createConsoleLogger", () => {
       log.warn("warn-msg");
       log.error("error-msg");
 
-      expect(logSpy.mock.calls.length).toBe(1);
-      expect(logSpy.mock.calls[0]?.[0]).toBe("[INFO] info-msg");
+      // info + error both route to console.error now (info: stderr routing, error: always stderr).
+      expect(errorSpy.mock.calls.length).toBe(2);
+      expect(errorSpy.mock.calls[0]?.[0]).toBe("[INFO] info-msg");
+      expect(errorSpy.mock.calls[1]?.[0]).toBe("[ERROR] error-msg");
       expect(warnSpy.mock.calls.length).toBe(1);
       expect(warnSpy.mock.calls[0]?.[0]).toBe("[WARN] warn-msg");
-      expect(errorSpy.mock.calls.length).toBe(1);
-      expect(errorSpy.mock.calls[0]?.[0]).toBe("[ERROR] error-msg");
     });
 
     it("level=debug keeps all four levels", () => {
@@ -53,12 +90,12 @@ describe("createConsoleLogger", () => {
       log.warn("w");
       log.error("e");
 
-      // info + debug both go to console.log
-      expect(logSpy.mock.calls.length).toBe(2);
-      expect(logSpy.mock.calls[0]?.[0]).toBe("[DEBUG] d");
-      expect(logSpy.mock.calls[1]?.[0]).toBe("[INFO] i");
+      // debug + info + error all go to console.error
+      expect(errorSpy.mock.calls.length).toBe(3);
+      expect(errorSpy.mock.calls[0]?.[0]).toBe("[DEBUG] d");
+      expect(errorSpy.mock.calls[1]?.[0]).toBe("[INFO] i");
+      expect(errorSpy.mock.calls[2]?.[0]).toBe("[ERROR] e");
       expect(warnSpy.mock.calls.length).toBe(1);
-      expect(errorSpy.mock.calls.length).toBe(1);
     });
 
     it("level=warn drops info and debug, keeps warn/error", () => {
@@ -68,9 +105,9 @@ describe("createConsoleLogger", () => {
       log.warn("w");
       log.error("e");
 
-      expect(logSpy.mock.calls.length).toBe(0);
-      expect(warnSpy.mock.calls.length).toBe(1);
       expect(errorSpy.mock.calls.length).toBe(1);
+      expect(errorSpy.mock.calls[0]?.[0]).toBe("[ERROR] e");
+      expect(warnSpy.mock.calls.length).toBe(1);
     });
 
     it("level=error drops everything except error", () => {
@@ -80,7 +117,6 @@ describe("createConsoleLogger", () => {
       log.warn("w");
       log.error("e");
 
-      expect(logSpy.mock.calls.length).toBe(0);
       expect(warnSpy.mock.calls.length).toBe(0);
       expect(errorSpy.mock.calls.length).toBe(1);
     });
@@ -90,8 +126,8 @@ describe("createConsoleLogger", () => {
       log.debug("d");
       log.info("i");
 
-      expect(logSpy.mock.calls.length).toBe(1);
-      expect(logSpy.mock.calls[0]?.[0]).toBe("[INFO] i");
+      expect(errorSpy.mock.calls.length).toBe(1);
+      expect(errorSpy.mock.calls[0]?.[0]).toBe("[INFO] i");
     });
   });
 
@@ -100,14 +136,14 @@ describe("createConsoleLogger", () => {
       const log = createConsoleLogger("info");
       log.info("hello", { a: 1, b: "two" });
 
-      expect(logSpy.mock.calls[0]?.[0]).toBe('[INFO] hello {"a":1,"b":"two"}');
+      expect(errorSpy.mock.calls[0]?.[0]).toBe('[INFO] hello {"a":1,"b":"two"}');
     });
 
     it("emits message only when meta is omitted", () => {
       const log = createConsoleLogger("info");
       log.info("plain");
 
-      expect(logSpy.mock.calls[0]?.[0]).toBe("[INFO] plain");
+      expect(errorSpy.mock.calls[0]?.[0]).toBe("[INFO] plain");
     });
 
     it("does not invoke JSON.stringify when level is filtered out", () => {
@@ -123,7 +159,7 @@ describe("createConsoleLogger", () => {
       };
       // Should not throw — debug is below the info threshold.
       log.debug("trap", trap as unknown as Record<string, unknown>);
-      expect(logSpy.mock.calls.length).toBe(0);
+      expect(errorSpy.mock.calls.length).toBe(0);
     });
   });
 
@@ -185,7 +221,7 @@ describe("createConsoleLogger", () => {
       }
 
       expect(buildCount).toBe(0);
-      expect(logSpy.mock.calls.length).toBe(0);
+      expect(errorSpy.mock.calls.length).toBe(0);
     });
 
     it("call-site gate runs the meta builder when debug is enabled", () => {
@@ -203,7 +239,7 @@ describe("createConsoleLogger", () => {
       }
 
       expect(buildCount).toBe(5);
-      expect(logSpy.mock.calls.length).toBe(5);
+      expect(errorSpy.mock.calls.length).toBe(5);
     });
 
     it("custom logger without isLevelEnabled falls back to running the meta builder (`?? true`)", () => {
@@ -242,8 +278,8 @@ describe("createConsoleLogger", () => {
       defaultLogger.info("default-info");
       defaultLogger.debug("default-debug");
 
-      expect(logSpy.mock.calls.length).toBe(1);
-      expect(logSpy.mock.calls[0]?.[0]).toBe("[INFO] default-info");
+      expect(errorSpy.mock.calls.length).toBe(1);
+      expect(errorSpy.mock.calls[0]?.[0]).toBe("[INFO] default-info");
     });
 
     it("exposes isLevelEnabled gating debug at info threshold", () => {

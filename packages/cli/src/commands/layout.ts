@@ -7,7 +7,7 @@ import { c } from "../ui/colors.js";
 import { resolveProject } from "../utils/project.js";
 import { normalizeErrorMessage } from "../utils/errorMessage.js";
 import { serveStaticProjectHtml } from "../utils/staticProjectServer.js";
-import { withMeta } from "../utils/updateCheck.js";
+import { printDeprecationNotice, withMeta } from "../utils/updateCheck.js";
 import {
   buildLayoutSampleTimes,
   buildTransitionSampleTimes,
@@ -388,16 +388,19 @@ function resolveMotionSpec(specPath: string, json: boolean): MotionSpec {
   if (json) {
     console.log(
       JSON.stringify(
-        withMeta({
-          schemaVersion: INSPECT_SCHEMA_VERSION,
-          ok: false,
-          error: message,
-          issues: [],
-          errorCount: 0,
-          warningCount: 0,
-          infoCount: 0,
-          issueCount: 0,
-        }),
+        withMeta(
+          {
+            schemaVersion: INSPECT_SCHEMA_VERSION,
+            ok: false,
+            error: message,
+            issues: [],
+            errorCount: 0,
+            warningCount: 0,
+            infoCount: 0,
+            issueCount: 0,
+          },
+          { deprecated: true },
+        ),
         null,
         2,
       ),
@@ -422,7 +425,7 @@ export function createInspectCommand(commandName: "inspect" | "layout") {
     meta: {
       name: commandName,
       description:
-        "Inspect rendered composition layout for text/container overflow, plus optional motion verification via a *.motion.json sidecar",
+        "Inspect rendered composition layout for text/container overflow, plus optional motion verification via a *.motion.json sidecar (deprecated, use check)",
     },
     args: {
       dir: { type: "positional", description: "Project directory", required: false },
@@ -476,6 +479,7 @@ export function createInspectCommand(commandName: "inspect" | "layout") {
     // Pre-existing command-run branching; U1 only swapped the seek internals.
     // fallow-ignore-next-line complexity
     async run({ args }) {
+      printDeprecationNotice(commandName);
       const project = resolveProject(args.dir);
       const samples = Math.max(1, parseInt(args.samples as string, 10) || 9);
       const tolerance = Math.max(0, parseFloat(args.tolerance as string) || 2);
@@ -534,25 +538,28 @@ export function createInspectCommand(commandName: "inspect" | "layout") {
         if (args.json) {
           console.log(
             JSON.stringify(
-              withMeta({
-                schemaVersion: INSPECT_SCHEMA_VERSION,
-                duration: result.duration,
-                samples: result.samples,
-                transitionSamples: atTransitions ? result.transitionSamples : undefined,
-                transitionSamplesDropped: atTransitions
-                  ? result.transitionSamplesDropped
-                  : undefined,
-                tolerance,
-                strict,
-                collapseStatic,
-                motionSpec: motionSpec ? motionSpecPath : undefined,
-                motionSamples: motionSpec ? result.motionSamples : undefined,
-                ...summary,
-                totalIssueCount: limited.totalIssueCount,
-                truncated: limited.truncated,
-                ok,
-                issues: limited.issues,
-              }),
+              withMeta(
+                {
+                  schemaVersion: INSPECT_SCHEMA_VERSION,
+                  duration: result.duration,
+                  samples: result.samples,
+                  transitionSamples: atTransitions ? result.transitionSamples : undefined,
+                  transitionSamplesDropped: atTransitions
+                    ? result.transitionSamplesDropped
+                    : undefined,
+                  tolerance,
+                  strict,
+                  collapseStatic,
+                  motionSpec: motionSpec ? motionSpecPath : undefined,
+                  motionSamples: motionSpec ? result.motionSamples : undefined,
+                  ...summary,
+                  totalIssueCount: limited.totalIssueCount,
+                  truncated: limited.truncated,
+                  ok,
+                  issues: limited.issues,
+                },
+                { deprecated: true },
+              ),
               null,
               2,
             ),
@@ -602,16 +609,19 @@ export function createInspectCommand(commandName: "inspect" | "layout") {
         if (args.json) {
           console.log(
             JSON.stringify(
-              withMeta({
-                schemaVersion: INSPECT_SCHEMA_VERSION,
-                ok: false,
-                error: message,
-                issues: [],
-                errorCount: 0,
-                warningCount: 0,
-                infoCount: 0,
-                issueCount: 0,
-              }),
+              withMeta(
+                {
+                  schemaVersion: INSPECT_SCHEMA_VERSION,
+                  ok: false,
+                  error: message,
+                  issues: [],
+                  errorCount: 0,
+                  warningCount: 0,
+                  infoCount: 0,
+                  issueCount: 0,
+                },
+                { deprecated: true },
+              ),
               null,
               2,
             ),

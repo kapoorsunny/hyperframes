@@ -13,7 +13,7 @@ import { normalizeErrorMessage } from "../utils/errorMessage.js";
 import type { ProjectLintResult } from "../utils/lintProject.js";
 import { resolveCompositionViewportFromHtml } from "../utils/compositionViewport.js";
 import { c } from "../ui/colors.js";
-import { withMeta } from "../utils/updateCheck.js";
+import { printDeprecationNotice, withMeta } from "../utils/updateCheck.js";
 import {
   resolveCliChromeGpuMode,
   seekCompositionTimeline,
@@ -514,13 +514,16 @@ function emitJsonReport(
 ): void {
   console.log(
     JSON.stringify(
-      withMeta({
-        ok: errors.length === 0,
-        errors,
-        warnings,
-        contrast,
-        contrastFailures: contrastFailures.length,
-      }),
+      withMeta(
+        {
+          ok: errors.length === 0,
+          errors,
+          warnings,
+          contrast,
+          contrastFailures: contrastFailures.length,
+        },
+        { deprecated: true },
+      ),
       null,
       2,
     ),
@@ -567,7 +570,11 @@ function emitTextReport(
 function emitFailureReport(message: string, asJson: boolean): void {
   if (asJson) {
     console.log(
-      JSON.stringify(withMeta({ ok: false, error: message, errors: [], warnings: [] }), null, 2),
+      JSON.stringify(
+        withMeta({ ok: false, error: message, errors: [], warnings: [] }, { deprecated: true }),
+        null,
+        2,
+      ),
     );
     return;
   }
@@ -577,7 +584,7 @@ function emitFailureReport(message: string, asJson: boolean): void {
 export default defineCommand({
   meta: {
     name: "validate",
-    description: `Load a composition in headless Chrome and report console errors
+    description: `Load a composition in headless Chrome and report console errors (deprecated, use check)
 
 Examples:
   hyperframes validate
@@ -602,6 +609,7 @@ Examples:
     },
   },
   async run({ args }) {
+    printDeprecationNotice("validate");
     const project = resolveProject(args.dir);
     const timeout = parseInt(args.timeout as string, 10) || 3000;
     const useContrast = args.contrast ?? true;
