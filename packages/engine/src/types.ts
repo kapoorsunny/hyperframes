@@ -212,6 +212,16 @@ export interface CapturePerfSummary {
    * `|`-join distinct reasons when parallel workers diverge.)
    */
   staticDedupSkipReason?: string;
+  // ── BeginFrame no-damage reuse (Linux/Docker lastFrameCache visibility) ──
+  /**
+   * BeginFrame frames where Chrome reported `hasDamage=false` and the previous
+   * buffer was reused from the per-page lastFrameCache (screenshotService.ts) —
+   * the BF counterpart of `staticDedupReused` (predictive dedup never arms
+   * under beginframe). Undefined/0 outside beginframe capture mode.
+   */
+  beginFrameNoDamage?: number;
+  /** BeginFrame frames where Chrome reported damage (fresh screenshot encoded). */
+  beginFrameHasDamage?: number;
   // ── drawElement fast-capture outcome (default-on release visibility) ──
   /** Final capture mode this session used: "drawelement" | "screenshot" | "beginframe". */
   captureMode: string;
