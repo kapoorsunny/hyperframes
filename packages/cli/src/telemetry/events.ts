@@ -147,6 +147,10 @@ export function trackRenderComplete(
     staticDedupSkipReason?: string;
     staticDedupPredictedFrames?: number;
     staticDedupReusedFrames?: number;
+    // BeginFrame no-damage reuse outcome (Linux/Docker lastFrameCache — the BF
+    // counterpart of static dedup). Undefined outside beginframe capture mode.
+    beginFrameNoDamageFrames?: number;
+    beginFrameHasDamageFrames?: number;
     // drawElement fast-capture outcome (default-on release visibility).
     // Undefined on render paths with no capture session.
     deCaptureMode?: string;
@@ -234,6 +238,8 @@ export function trackRenderComplete(
       static_dedup_skip_reason: props.staticDedupSkipReason,
       static_dedup_predicted_frames: props.staticDedupPredictedFrames,
       static_dedup_reused_frames: props.staticDedupReusedFrames,
+      begin_frame_no_damage_frames: props.beginFrameNoDamageFrames,
+      begin_frame_has_damage_frames: props.beginFrameHasDamageFrames,
       de_capture_mode: props.deCaptureMode,
       de_compile_gate: props.deCompileGate,
       de_clamp_reason: props.deClampReason,

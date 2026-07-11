@@ -3238,6 +3238,8 @@ export function getCapturePerfSummary(session: CaptureSession): CapturePerfSumma
     staticDedupArmed: (session.staticFrames?.size ?? 0) > 0,
     staticDedupPredicted: session.staticFrames?.size ?? 0,
     staticDedupSkipReason: session.staticDedupSkipReason,
+    beginFrameNoDamage: session.beginFrameNoDamageCount,
+    beginFrameHasDamage: session.beginFrameHasDamageCount,
     captureMode: session.captureMode,
     deGateReason: session.deGateReason,
     deWorkerEncode: session.workerEncodeEnabled ?? false,

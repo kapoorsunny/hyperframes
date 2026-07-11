@@ -375,6 +375,25 @@ export interface RenderPerfSummary {
     skipReason?: string;
   };
   /**
+   * BeginFrame no-damage reuse outcome for this render (Linux/Docker),
+   * aggregated across the sequential session or all parallel workers: frames
+   * Chrome reported unchanged (`hasDamage=false` → previous buffer reused via
+   * the engine's lastFrameCache) vs frames freshly encoded. The BF counterpart
+   * of `staticDedup` (predictive dedup never arms under beginframe); the
+   * static-frame fraction is noDamageFrames / (noDamageFrames + hasDamageFrames).
+   * Undefined when no session captured in beginframe mode.
+   *
+   * Like every metric aggregated from `dedupPerfs` (staticDedup, drawElement,
+   * subTimelineWait), a partial-capture RETRY replaces the counters with the
+   * final attempt's set (see the reset in executeDiskCaptureWithAdaptiveRetry)
+   * — after a missing-range retry the counts cover only the recaptured ranges,
+   * not the whole render, so noDamage + hasDamage may be < totalFrames.
+   */
+  beginFrameReuse?: {
+    noDamageFrames: number;
+    hasDamageFrames: number;
+  };
+  /**
    * drawElement fast-capture outcome for this render (default-on release
    * visibility). Undefined when no capture session ran.
    */
