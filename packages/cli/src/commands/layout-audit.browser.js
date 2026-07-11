@@ -796,6 +796,43 @@
     };
   }
 
+  // Text whose glyphs paint with an effectively transparent fill renders
+  // invisibly even though the element, its box, opacity and color all read as
+  // present — so geometry/occlusion/contrast audits miss it (contrast reads
+  // `color`, not the fill that actually paints). `-webkit-text-fill-color`
+  // overrides `color` for the glyph fill AND inherits, so a parent's
+  // `transparent` fill silently blanks descendant text that has its own opaque
+  // `color`. Its computed value already resolves to `color` when unset, so it
+  // is the effective fill directly. Gradient/clipped text (`background-clip:
+  // text`) legitimately uses a transparent fill — the clipped background paints
+  // the glyphs — so exclude it.
+  function invisibleTextIssue(element, time) {
+    const textRect = textRectFor(element);
+    if (!textRect) return null;
+    const text = textContentFor(element);
+    if (!text) return null;
+    const cs = getComputedStyle(element);
+    const fill = cs.getPropertyValue("-webkit-text-fill-color") || cs.color;
+    if (colorAlpha(fill) > 0.05) return null;
+    const clip =
+      cs.getPropertyValue("-webkit-background-clip") ||
+      cs.getPropertyValue("background-clip") ||
+      "";
+    if (/text/i.test(clip)) return null;
+    return {
+      code: "text_not_painted",
+      severity: "error",
+      time,
+      selector: selectorFor(element),
+      text,
+      message:
+        "Text paints with an effectively transparent fill (-webkit-text-fill-color / color), so its glyphs are invisible.",
+      rect: textRect,
+      fixHint:
+        "Set an explicit, opaque `color` on the text — and an explicit `-webkit-text-fill-color` if an ancestor makes the fill transparent. If the transparency is intentional gradient text, add `background-clip: text`.",
+    };
+  }
+
   function candidateAnchor(element) {
     const dataAttributes = {};
     for (const attribute of Array.from(element.attributes)) {
@@ -881,6 +918,8 @@
       issues.push(...textOverflowIssues(element, root, rootRect, time, tolerance));
       const occluded = occludedTextIssue(element, time);
       if (occluded) issues.push(occluded);
+      const invisible = invisibleTextIssue(element, time);
+      if (invisible) issues.push(invisible);
     }
 
     issues.push(...containerOverflowIssues(root, time, tolerance));
