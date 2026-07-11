@@ -63,6 +63,8 @@ export interface HyperframesConfig {
   skillsOutdatedCount?: number;
   /** How many skills were missing (not installed) at the last check. */
   skillsMissingCount?: number;
+  /** How many installed skills were flagged removed-upstream at the last check. */
+  skillsRemovedCount?: number;
   /**
    * True once the DE parallel-router experiment ("HF_DE_PARALLEL_ROUTER")
    * has actually FAILED (its self-verify/generic-failure safety net fired —
@@ -126,6 +128,7 @@ export function readConfig(): HyperframesConfig {
       skillsUpdateAvailable: parsed.skillsUpdateAvailable,
       skillsOutdatedCount: parsed.skillsOutdatedCount,
       skillsMissingCount: parsed.skillsMissingCount,
+      skillsRemovedCount: parsed.skillsRemovedCount,
       // Explicit `=== true`/typeof-number checks rather than a truthy/nullish
       // read — a hand-edited or corrupted config could plausibly carry a
       // non-boolean/non-number JSON value (e.g. the STRING "false", which is
