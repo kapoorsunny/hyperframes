@@ -26,4 +26,36 @@ describe("webmAlphaAdvisory", () => {
     expect(webmAlphaAdvisory("mp4", { probed: true, alphaMode: false })).toBeUndefined();
     expect(webmAlphaAdvisory("mov", { probed: true, alphaMode: false })).toBeUndefined();
   });
+
+  it("warns when tag is present but sampled frames all read alpha=255", () => {
+    const msg = webmAlphaAdvisory("webm", {
+      probed: true,
+      alphaMode: true,
+      sampledAlphaFullyOpaque: true,
+    });
+    expect(msg).toBeDefined();
+    expect(msg).toContain("ALPHA_MODE=1");
+    expect(msg).toContain("prores_ks");
+  });
+
+  it("stays silent when tag is present and sampled frames are not fully opaque", () => {
+    expect(
+      webmAlphaAdvisory("webm", {
+        probed: true,
+        alphaMode: true,
+        sampledAlphaFullyOpaque: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("stays silent when the pixel-level probe couldn't run (undefined)", () => {
+    // Preserves #2044 behavior: an inconclusive probe is not a warning trigger.
+    expect(
+      webmAlphaAdvisory("webm", {
+        probed: true,
+        alphaMode: true,
+        sampledAlphaFullyOpaque: undefined,
+      }),
+    ).toBeUndefined();
+  });
 });

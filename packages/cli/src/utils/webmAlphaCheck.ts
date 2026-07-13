@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { findFFprobe } from "../browser/ffmpeg.js";
+import { findFFmpeg, findFFprobe } from "../browser/ffmpeg.js";
 import { c } from "../ui/colors.js";
 
 /**
@@ -11,6 +11,15 @@ export interface WebmAlphaProbe {
   probed: boolean;
   /** True when the VP9 stream declares the alpha sidecar (ALPHA_MODE=1 tag). */
   alphaMode: boolean;
+  /**
+   * When true, the tag says alpha but 3 sampled decoded frames report every
+   * pixel at alpha=255 — either the composition has no transparent regions in
+   * the samples, or libvpx-vp9 wrote the tag without emitting the alpha side
+   * data (a known Windows-build quirk). Undefined when the pixel-level probe
+   * couldn't run (no ffmpeg, decode error, unexpected byte count) — an
+   * inconclusive probe is not a warning trigger.
+   */
+  sampledAlphaFullyOpaque?: boolean;
 }
 
 /**
@@ -32,13 +41,27 @@ export interface WebmAlphaProbe {
  */
 export function webmAlphaAdvisory(format: string, probe: WebmAlphaProbe): string | undefined {
   if (format !== "webm") return undefined;
-  if (!probe.probed || probe.alphaMode) return undefined;
-  return (
-    "The WebM output has no VP9 alpha sidecar (the ALPHA_MODE stream tag is absent), " +
-    "so transparency was flattened to opaque. Your ffmpeg/libvpx-vp9 build cannot emit " +
-    "the alpha plane on this platform. For guaranteed transparency, re-render with " +
-    "--format mov (ProRes 4444)."
-  );
+  if (!probe.probed) return undefined;
+  if (!probe.alphaMode) {
+    return (
+      "The WebM output has no VP9 alpha sidecar (the ALPHA_MODE stream tag is absent), " +
+      "so transparency was flattened to opaque. Your ffmpeg/libvpx-vp9 build cannot emit " +
+      "the alpha plane on this platform. For guaranteed transparency, re-render with " +
+      "--format mov (ProRes 4444)."
+    );
+  }
+  if (probe.sampledAlphaFullyOpaque) {
+    return (
+      "The WebM declares alpha (ALPHA_MODE=1) but 3 sampled decoded frames read " +
+      "alpha=255 everywhere. This may be intentional (the composition has no transparent " +
+      "regions in the samples) OR your ffmpeg/libvpx-vp9 build wrote the tag without " +
+      "emitting the alpha side data — a known Windows-build quirk. To rule it out, " +
+      "re-render with --format mov (ProRes 4444), or with --format png-sequence and " +
+      "encode the frames yourself: ffmpeg -framerate <fps> -i frame_%06d.png " +
+      "-c:v prores_ks -profile:v 4444 -pix_fmt yuva444p10le out.mov"
+    );
+  }
+  return undefined;
 }
 
 /**
@@ -78,9 +101,61 @@ function probeWebmAlpha(filePath: string): WebmAlphaProbe {
     const alphaMode = Object.entries(tags).some(
       ([k, v]) => k.toLowerCase() === "alpha_mode" && String(v) === "1",
     );
-    return { probed: true, alphaMode };
+    const probe: WebmAlphaProbe = { probed: true, alphaMode };
+    if (alphaMode) {
+      const opaque = sampledAlphaIsFullyOpaque(filePath);
+      // Only surface `true`; leave undefined otherwise so #2044's "silent on
+      // working alpha" fast path is preserved when the pixel probe can't run
+      // OR when the sample has any partial/transparent pixel.
+      if (opaque === true) probe.sampledAlphaFullyOpaque = true;
+    }
+    return probe;
   } catch {
     return { probed: false, alphaMode: false };
+  }
+}
+
+/**
+ * Force the libvpx-vp9 decoder (default decoder silently discards VP9 alpha
+ * — see docs/guides/rendering.mdx) and sample 3 frames at 8x8 rgba. Returns
+ * `true` iff every alpha byte across all samples is 255, `false` when any
+ * pixel shows partial/full transparency, `undefined` if the probe couldn't
+ * run (no ffmpeg, decode error, unexpected byte count).
+ */
+function sampledAlphaIsFullyOpaque(filePath: string): boolean | undefined {
+  const ffmpegPath = findFFmpeg();
+  if (!ffmpegPath) return undefined;
+  try {
+    const buf = execFileSync(
+      ffmpegPath,
+      [
+        "-v",
+        "error",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        filePath,
+        "-frames:v",
+        "3",
+        "-vf",
+        "scale=8:8",
+        "-pix_fmt",
+        "rgba",
+        "-f",
+        "rawvideo",
+        "-",
+      ],
+      { timeout: 30_000, maxBuffer: 4096, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    // 8*8 rgba * 3 frames = 768 bytes; require full frame count for a
+    // reliable verdict (silent short-decode is a probe failure, not a signal).
+    if (buf.length !== 768) return undefined;
+    for (let i = 3; i < buf.length; i += 4) {
+      if (buf[i] !== 255) return false;
+    }
+    return true;
+  } catch {
+    return undefined;
   }
 }
 
