@@ -1914,13 +1914,16 @@ export async function executeRenderJob(
     // that probe to software: `resolveConfig` couldn't see this at config
     // time, so `captureObservability.forceScreenshot` was still false,
     // misreporting `captureMode: "beginframe"` for a session that will
-    // actually take the screenshot path. Env-level opt-out preserved via
-    // the shared helper.
+    // actually take the screenshot path. Both env and programmatic opt-outs
+    // preserved via the shared helper (the programmatic one carried on the
+    // config as `forceScreenshotExplicitlyOptedOut`).
     const observabilityForceScreenshot =
       captureObservability.forceScreenshot ||
       shouldClampToScreenshotForConcreteGpu(
         resolvedBrowserGpuMode,
         captureObservability.forceScreenshot,
+        process.env,
+        { programmaticOptOut: cfg.forceScreenshotExplicitlyOptedOut ?? false },
       );
     updateCaptureObservability({
       browserGpuMode: resolvedBrowserGpuMode,

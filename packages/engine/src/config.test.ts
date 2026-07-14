@@ -395,6 +395,54 @@ describe("resolveConfig", () => {
         expect(shouldClampToScreenshotForConcreteGpu("software", false, env)).toBe(true);
       }
     });
+
+    it("honors the programmatic opt-out via opts.programmaticOptOut on software", () => {
+      // The auto→software probe path is what this really guards: `resolveConfig`
+      // sets `forceScreenshotExplicitlyOptedOut = true` when the caller passed
+      // `overrides.forceScreenshot === false`, and the helper reads it here so
+      // the concrete-resolution route matches the config-time behavior.
+      expect(
+        shouldClampToScreenshotForConcreteGpu("software", false, {} as NodeJS.ProcessEnv, {
+          programmaticOptOut: true,
+        }),
+      ).toBe(false);
+    });
+
+    it("programmatic opt-out beats a missing env opt-out (both escape hatches independent)", () => {
+      // Even with no env opt-out set, a programmatic opt-out preserves BeginFrame-
+      // on-software debugging on the auto→software probe path.
+      expect(
+        shouldClampToScreenshotForConcreteGpu(
+          "software",
+          false,
+          { PRODUCER_FORCE_SCREENSHOT: "true" } as NodeJS.ProcessEnv,
+          { programmaticOptOut: true },
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe("forceScreenshotExplicitlyOptedOut provenance", () => {
+    it("is set to true when programmatic override forceScreenshot=false is passed", () => {
+      setEnv("PRODUCER_BROWSER_GPU_MODE", "hardware");
+      unsetEnv("PRODUCER_FORCE_SCREENSHOT");
+      const config = resolveConfig({ forceScreenshot: false });
+      expect(config.forceScreenshotExplicitlyOptedOut).toBe(true);
+    });
+
+    it("is set to true when env PRODUCER_FORCE_SCREENSHOT=false is set", () => {
+      setEnv("PRODUCER_BROWSER_GPU_MODE", "hardware");
+      setEnv("PRODUCER_FORCE_SCREENSHOT", "false");
+      const config = resolveConfig();
+      expect(config.forceScreenshotExplicitlyOptedOut).toBe(true);
+    });
+
+    it("stays unset when neither opt-out is present (default)", () => {
+      setEnv("PRODUCER_BROWSER_GPU_MODE", "hardware");
+      unsetEnv("PRODUCER_FORCE_SCREENSHOT");
+      const config = resolveConfig();
+      expect(config.forceScreenshotExplicitlyOptedOut).toBeUndefined();
+    });
   });
 
   describe("lowMemoryMode", () => {

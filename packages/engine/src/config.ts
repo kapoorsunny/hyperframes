@@ -89,6 +89,19 @@ export interface EngineConfig {
    */
   pageSideCompositingAutoDisabled?: boolean;
   /**
+   * INTERNAL. Set to `true` by `resolveConfig` when the caller explicitly
+   * opted out of the software-GPU→screenshot clamp — either via env
+   * `PRODUCER_FORCE_SCREENSHOT=false` or programmatic
+   * `overrides.forceScreenshot === false`. The concrete-resolved-GPU helper
+   * (`shouldClampToScreenshotForConcreteGpu`) reads this so the
+   * `browserGpuMode:"auto"` → software probe path preserves the same
+   * escape hatch as literal `browserGpuMode:"software"` (the boolean
+   * `forceScreenshot === false` at that point is otherwise ambiguous —
+   * default vs explicit opt-out — because the config resolves before
+   * the runtime probe fires). Not intended to be set by callers.
+   */
+  forceScreenshotExplicitlyOptedOut?: boolean;
+  /**
    * Low-memory render profile. When `true`, the orchestrator collapses the
    * pipeline to its cheapest shape on memory-constrained hosts: it skips the
    * throwaway auto-worker calibration browser, pins capture to a single
@@ -581,6 +594,12 @@ export function resolveConfig(overrides?: Partial<EngineConfig>): EngineConfig {
   // on-software debugging remains possible.
   const explicitForceScreenshotOptOut =
     env("PRODUCER_FORCE_SCREENSHOT") === "false" || overrides?.forceScreenshot === false;
+  // Persist provenance so the concrete-resolved-GPU helper can honor the
+  // programmatic opt-out too — at that point `forceScreenshot === false` is
+  // otherwise ambiguous between default and explicit opt-out.
+  if (explicitForceScreenshotOptOut) {
+    merged.forceScreenshotExplicitlyOptedOut = true;
+  }
   if (
     merged.browserGpuMode === "software" &&
     !merged.forceScreenshot &&
@@ -615,23 +634,30 @@ export function resolveConfig(overrides?: Partial<EngineConfig>): EngineConfig {
  * Runtime-resolved companion to the software-GPU screenshot clamp in
  * `resolveConfig`. Returns `true` iff callers should treat this render as
  * `forceScreenshot=true` even though the config's stored `forceScreenshot`
- * is `false`. Fires when the concrete resolved GPU is software AND the
- * env-level opt-out (`PRODUCER_FORCE_SCREENSHOT=false`) is NOT set.
+ * is `false`. Fires when the concrete resolved GPU is software AND neither
+ * the env opt-out (`PRODUCER_FORCE_SCREENSHOT=false`) nor the programmatic
+ * opt-out (`overrides.forceScreenshot === false`, carried via
+ * `cfg.forceScreenshotExplicitlyOptedOut`) is set.
  *
  * `resolveConfig`'s clamp only sees `browserGpuMode` as a string, so
  * `"auto"` that runtime-probes to software slips through. This helper
  * closes that gap at the concrete-resolution points (`frameCapture` and
- * `renderOrchestrator`). Same invariant, same env opt-out, one predicate.
+ * `renderOrchestrator`). Same invariant, same escape hatches, one predicate.
  *
  * Callers should skip when the invariant is already satisfied
- * (`currentForceScreenshot === true`) to avoid redundant work.
+ * (`currentForceScreenshot === true`) to avoid redundant work. Pass
+ * `cfg.forceScreenshotExplicitlyOptedOut` via `opts.programmaticOptOut` so
+ * the `browserGpuMode:"auto"` → software probe path honors the same
+ * programmatic escape hatch as literal `browserGpuMode:"software"`.
  */
 export function shouldClampToScreenshotForConcreteGpu(
   resolvedGpuMode: "software" | "hardware",
   currentForceScreenshot: boolean,
   env: NodeJS.ProcessEnv = process.env,
+  opts: { programmaticOptOut?: boolean } = {},
 ): boolean {
   if (currentForceScreenshot) return false;
   if (resolvedGpuMode !== "software") return false;
+  if (opts.programmaticOptOut) return false;
   return env["PRODUCER_FORCE_SCREENSHOT"] !== "false";
 }
