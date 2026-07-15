@@ -95,7 +95,11 @@ const DEFAULT_DE_STALL_MS = 60_000;
 const DE_STALL_POLL_MS = 5_000;
 
 function resolveDeStallTimeoutMs(): number {
-  const raw = process.env.HF_DE_STALL_MS;
+  // HF_DE_PARALLEL_STALL_MS is the pre-rename name (this config used to guard
+  // only the parallel path). Bridged for one release so an already-deployed
+  // ops surface (runbook, ConfigMap, ...) tuning the old name doesn't
+  // silently no-op; drop once nothing sets it anymore.
+  const raw = process.env.HF_DE_STALL_MS ?? process.env.HF_DE_PARALLEL_STALL_MS;
   const parsed = raw ? Number(raw) : Number.NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DE_STALL_MS;
 }
@@ -109,10 +113,32 @@ function resolveDeStallTimeoutMs(): number {
  * contract as the worker-encode pipeline's encodeResult) and rejects so the
  * caller fails fast to the pinned screenshot fallback instead of waiting out
  * the ~5min CDP protocol timeout.
+ *
+ * `signal` is read only at trip time to label the rejection, never to cancel
+ * the race early — a parent abort during a wedge still has to wait out the
+ * same deadline (nothing can unstick the underlying call), but the message
+ * must say "aborted", not "stalled", so downstream logs/telemetry don't
+ * misreport a deliberate cancellation as a capture failure.
  */
-function raceAgainstStall<T>(promise: Promise<T>, deadlineMs: number, message: string): Promise<T> {
+function raceAgainstStall<T>(
+  promise: Promise<T>,
+  deadlineMs: number,
+  message: string,
+  signal?: AbortSignal,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), Math.max(0, deadlineMs));
+    const timer = setTimeout(
+      () => {
+        reject(
+          new Error(
+            signal?.aborted
+              ? "[Render] Sequential drawElement capture aborted while a capture call was in flight."
+              : message,
+          ),
+        );
+      },
+      Math.max(0, deadlineMs),
+    );
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -392,6 +418,7 @@ async function runWorkerEncodePipelineLoop(
   onProgress: CaptureStreamingStageInput["onProgress"],
   log: CaptureStreamingStageInput["log"],
   stats: DeDrainStats,
+  abortSignal: AbortSignal | undefined,
 ): Promise<void> {
   let prev: { idx: number; encodeResult: Promise<Buffer> } | null = null;
   const frameTime = (i: number) => (i * job.config.fps.den) / job.config.fps.num;
@@ -405,6 +432,7 @@ async function runWorkerEncodePipelineLoop(
       promise,
       stallTimeoutMs - (Date.now() - lastProgressAt),
       `[Render] Sequential drawElement capture stalled: no frame progress for ${stallTimeoutMs}ms (stuck at frame ${idx}/${totalFrames}).`,
+      abortSignal,
     );
 
   const drainPrev = async (): Promise<void> => {
@@ -815,6 +843,7 @@ export async function runCaptureStreamingStage(
             onProgress,
             log,
             deDrainStats,
+            abortSignal,
           );
         } else {
           const stallTimeoutMs = resolveDeStallTimeoutMs();
@@ -826,6 +855,7 @@ export async function runCaptureStreamingStage(
               captureFrameToBuffer(session, i, time),
               stallTimeoutMs - (Date.now() - lastProgressAt),
               `[Render] Sequential drawElement capture stalled: no frame progress for ${stallTimeoutMs}ms (stuck at frame ${i}/${totalFrames}).`,
+              abortSignal,
             );
             await reorderBuffer.waitForFrame(i);
             ensureFrameWritten(await currentEncoder.writeFrame(buffer), i, currentEncoder);
