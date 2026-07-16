@@ -693,7 +693,8 @@ export function buildChromeArgs(
     // in the raw JPEG before encoding). Keep deterministic BeginFrame capture,
     // but route compositing through Chrome's software path when the browser is
     // already in software-GPU mode. Hardware-GPU and screenshot captures keep
-    // their existing compositor paths.
+    // their existing compositor paths. Remove this workaround once the pinned
+    // chrome-headless-shell includes https://issues.chromium.org/issues/535256667.
     if (browserGpuMode === "software") {
       chromeArgs.push("--disable-gpu-compositing");
     }
