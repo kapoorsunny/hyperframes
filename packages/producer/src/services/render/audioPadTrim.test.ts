@@ -47,8 +47,13 @@ describe("buildPadTrimAudioArgs", () => {
     expect(concatArgs[concatArgs.indexOf("-i") + 1]).toBe("pipe:0");
     expect(concatArgs[concatArgs.indexOf("-c:a") + 1]).toBe("copy");
     expect(concatArgs[concatArgs.length - 1]).toBe("/tmp/out.aac");
-    expect(plan.steps[1]!.stdin).toContain("file 'file:///tmp/in.aac'");
-    expect(plan.steps[1]!.stdin).toContain("file 'file:///tmp/out.aac.pad-silence.aac'");
+    // Concat script MUST use bare paths, NOT `file://` URLs. FFmpeg 8.x
+    // on Windows can't open `file:///C:/…` URLs from the concat demuxer
+    // (field-signal ts=1784169914 / 1784177061 / 1784177375). Regression
+    // pin: the `file://` scheme prefix must never appear in the stdin.
+    expect(plan.steps[1]!.stdin).toContain("file '/tmp/in.aac'");
+    expect(plan.steps[1]!.stdin).toContain("file '/tmp/out.aac.pad-silence.aac'");
+    expect(plan.steps[1]!.stdin).not.toContain("file://");
     expect(plan.cleanupPaths).toEqual(["/tmp/out.aac.pad-silence.aac"]);
 
     const reencodedSourceStep = plan.steps.find(
@@ -105,6 +110,31 @@ describe("buildPadTrimAudioArgs", () => {
     expect(padNeeded.operation).toBe("pad");
     const trimNeeded = buildPadTrimAudioArgs("/tmp/a.aac", "/tmp/o.aac", 5.002, 5.0);
     expect(trimNeeded.operation).toBe("trim");
+  });
+
+  it("does not emit `file://` URLs in the pad-concat stdin (FFmpeg 8.x Windows compat)", () => {
+    // Regression pin for field-signal reports ts=1784169914 / 1784177061 /
+    // ts=1784177375 (win32/x64, CLI 0.7.59, ffmpeg 8.1.1-full_build). The
+    // concat demuxer's file open on Windows in FFmpeg 8.x rejects
+    // `file:///C:/…` URLs with "Impossible to open …". The concat script
+    // MUST use bare paths. Match sibling `assemble.ts` /
+    // `chunkEncoder.ts` conventions.
+    const winPlan = buildPadTrimAudioPlan(
+      "C:\\Users\\alice\\AppData\\Local\\Temp\\hf-render-abc\\audio.aac",
+      "C:\\Users\\alice\\AppData\\Local\\Temp\\hf-render-abc\\audio-padded.aac",
+      4.0,
+      5.0,
+    );
+    expect(winPlan.operation).toBe("pad");
+    const concatStep = winPlan.steps.find((s) => s.kind === "pad-concat");
+    expect(concatStep).toBeDefined();
+    expect(concatStep!.stdin).toBeDefined();
+    expect(concatStep!.stdin).not.toContain("file://");
+    expect(concatStep!.stdin).not.toContain("file:\\\\");
+    // Bare Windows paths appear as-is in the concat directives.
+    expect(concatStep!.stdin).toContain(
+      "file 'C:\\Users\\alice\\AppData\\Local\\Temp\\hf-render-abc\\audio.aac'",
+    );
   });
 });
 

@@ -20,7 +20,6 @@
 
 import { spawn } from "node:child_process";
 import { rmSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import {
   extractAudioMetadata,
   formatFfmpegError,
@@ -231,8 +230,17 @@ function channelLayoutForChannels(channels: number | undefined): string {
 }
 
 function concatFileLine(path: string): string {
-  const normalized = pathToFileURL(path).href;
-  return `file '${normalized.replace(/'/g, "'\\''")}'`;
+  // Bare paths in concat directives — NOT `file://` URLs. FFmpeg 8.x on
+  // Windows fails to open URL-form paths from the concat demuxer with
+  // "Impossible to open file:///C:/…" (its file protocol strips the
+  // `file:` prefix leaving `///C:/…`, which Windows path parsing then
+  // rejects). Field-signal reports (ts=1784169914 / 1784177061 /
+  // 1784177375, all win32/x64 CLI 0.7.59; the last isolated the module's
+  // arg shape vs a working manual `apad=whole_dur` command). Bare paths
+  // also match the convention already used by the sibling concat
+  // scripts in `assemble.ts` and `chunkEncoder.ts`. The single-quote
+  // escaping (`'\''`) is the concat demuxer's own escape rule.
+  return `file '${path.replace(/'/g, "'\\''")}'`;
 }
 
 /**
