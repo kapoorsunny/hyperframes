@@ -48,7 +48,12 @@ export interface CompositionCensus {
     nested: boolean;
     /** Count of sub-composition mounts (`data-composition-src` count). */
     subCompositionCount: number;
-    /** Any GSAP timeline usage (script tags referencing gsap or data-gsap-*). */
+    /**
+     * Any GSAP timeline usage detected via `<script>` src or inline
+     * `gsap.<method>(...)` invocation. Does not scan for `data-gsap-*`
+     * attributes on non-script elements — HTML-authored GSAP hooks that live
+     * outside script tags won't surface here.
+     */
     usesGsap: boolean;
     /** Any element carrying `data-start` or `data-duration`. */
     usesDataTimeline: boolean;
@@ -61,33 +66,61 @@ const DATA_DURATION_SELECTOR = "[data-duration]";
 const DATA_START_SELECTOR = "[data-start]";
 
 // Values that should NOT count as a "filter"/"mask"/"transform" attribute — the
-// browser default. Explicit "none" is authored intent to disable, still counts
-// as noteworthy for the census (author touched the property).
-const EMPTY_VALUES = new Set(["", "initial", "unset"]);
+// browser default or an explicit inherit/revert to the ancestor's value.
+// Explicit "none" is authored intent to disable, still counts as noteworthy for
+// the census (author touched the property).
+const EMPTY_VALUES = new Set(["", "initial", "unset", "inherit", "revert", "revert-layer"]);
 
-function hasNonEmptyInlineStyle(el: Element, property: string): boolean {
+// Hard cap on input HTML size. Above this, we early-exit rather than feed
+// linkedom a hostile input. The census is a heuristic for maintainer
+// pattern-matching; a truncated result is preferable to an OOM on a bad file.
+const MAX_HTML_BYTES = 20 * 1024 * 1024;
+
+function iterInlineDeclarations(
+  el: Element,
+  visit: (property: string, value: string) => boolean,
+): boolean {
   const raw = el.getAttribute("style");
   if (!raw) return false;
-  // Case-insensitive property match. We intentionally do NOT parse CSS
-  // shorthand-style semantics — a `background: url(...)` in the shorthand
-  // still surfaces via a substring probe of the property token, which is
-  // sufficient for structural presence signaling.
-  const target = property.toLowerCase();
   const declarations = raw.split(";");
   for (const decl of declarations) {
     const colon = decl.indexOf(":");
     if (colon <= 0) continue;
     const prop = decl.slice(0, colon).trim().toLowerCase();
     const value = decl.slice(colon + 1).trim();
-    if (prop === target && !EMPTY_VALUES.has(value.toLowerCase())) return true;
+    if (visit(prop, value)) return true;
   }
   return false;
+}
+
+function hasNonEmptyInlineStyle(el: Element, property: string): boolean {
+  const target = property.toLowerCase();
+  return iterInlineDeclarations(el, (prop, value) => {
+    if (prop !== target) return false;
+    return !EMPTY_VALUES.has(value.toLowerCase());
+  });
+}
+
+function hasInlineStyleValueMatching(el: Element, property: string, valueRe: RegExp): boolean {
+  const target = property.toLowerCase();
+  return iterInlineDeclarations(el, (prop, value) => {
+    if (prop !== target) return false;
+    return valueRe.test(value);
+  });
 }
 
 function anyElementHasInlineStyle(doc: Document, property: string): boolean {
   const all = doc.querySelectorAll("[style]");
   for (const el of Array.from(all)) {
     if (hasNonEmptyInlineStyle(el as unknown as Element, property)) return true;
+  }
+  return false;
+}
+
+function anyElementHasInlineStyleValue(doc: Document, property: string, valueRe: RegExp): boolean {
+  const all = doc.querySelectorAll("[style]");
+  for (const el of Array.from(all)) {
+    if (hasInlineStyleValueMatching(el as unknown as Element, property, valueRe)) return true;
   }
   return false;
 }
@@ -121,8 +154,11 @@ function detectGsap(doc: Document): boolean {
  *
  * Safe to call on partial/malformed HTML — linkedom's parser tolerates the
  * usual authoring accidents and the census reports zeros for missing sections.
+ * Inputs larger than {@link MAX_HTML_BYTES} short-circuit to a zero census
+ * rather than risk OOMing linkedom on a hostile file.
  */
 export function buildCompositionCensus(html: string): CompositionCensus {
+  if (html.length > MAX_HTML_BYTES) return emptyCensus();
   const doc = parseHTML(html).document as unknown as Document;
 
   const count = (selector: string): number => doc.querySelectorAll(selector).length;
@@ -134,6 +170,13 @@ export function buildCompositionCensus(html: string): CompositionCensus {
   // best-effort catch for authored stylesheets in the same file.
   const anyStyle = (property: string, styleRegex: RegExp): boolean =>
     anyElementHasInlineStyle(doc, property) || hasStyleTagReferencing(doc, styleRegex);
+
+  // Value-scoped probe — inline branch matches on property value (not just
+  // property presence), so `position:fixed` doesn't false-positive on
+  // `position:absolute` and `overflow:hidden` catches inline `overflow:hidden`.
+  const anyStyleValue = (property: string, inlineValueRe: RegExp, styleRegex: RegExp): boolean =>
+    anyElementHasInlineStyleValue(doc, property, inlineValueRe) ||
+    hasStyleTagReferencing(doc, styleRegex);
 
   return {
     elementCensus: {
@@ -150,23 +193,68 @@ export function buildCompositionCensus(html: string): CompositionCensus {
       mixBlendMode: anyStyle("mix-blend-mode", /mix-blend-mode\s*:/i),
       transform: anyStyle("transform", /(^|\s|\{)transform\s*:/i),
       mask: anyStyle("mask", /(^|\s|\{)mask\s*:/i),
-      positionFixed:
-        anyElementHasInlineStyle(doc, "position") ||
-        hasStyleTagReferencing(doc, /position\s*:\s*fixed/i),
-      overflowHidden: hasStyleTagReferencing(doc, /overflow\s*:\s*hidden/i),
+      positionFixed: anyStyleValue("position", /^fixed$/i, /position\s*:\s*fixed/i),
+      overflowHidden: anyStyleValue(
+        "overflow",
+        /(^|\b)hidden(\b|$)/i,
+        /overflow(-[xy])?\s*:\s*hidden/i,
+      ),
       zIndex: anyStyle("z-index", /z-index\s*:/i),
       dataHasAudio: count(DATA_HAS_AUDIO_SELECTOR) > 0,
       dataDuration: count(DATA_DURATION_SELECTOR) > 0,
       dataStart: count(DATA_START_SELECTOR) > 0,
       dataCompositionSrc: subCompositionCount > 0,
-      backgroundImage: anyStyle("background-image", /background(-image)?\s*:[^;]*url\(/i),
-      maskImage: anyStyle("mask-image", /mask(-image)?\s*:[^;]*url\(/i),
+      // Match longhand (`background-image:`) OR shorthand (`background:`)
+      // pointing at a `url(...)`. Same for `mask` / `mask-image`.
+      backgroundImage:
+        anyElementHasInlineStyle(doc, "background-image") ||
+        anyElementHasInlineStyleValue(doc, "background", /url\(/i) ||
+        hasStyleTagReferencing(doc, /background(-image)?\s*:[^;]*url\(/i),
+      maskImage:
+        anyElementHasInlineStyle(doc, "mask-image") ||
+        anyElementHasInlineStyleValue(doc, "mask", /url\(/i) ||
+        hasStyleTagReferencing(doc, /mask(-image)?\s*:[^;]*url\(/i),
     },
     timelineShape: {
       nested: subCompositionCount > 0,
       subCompositionCount,
       usesGsap: detectGsap(doc),
       usesDataTimeline: count(DATA_START_SELECTOR) + count(DATA_DURATION_SELECTOR) > 0,
+    },
+  };
+}
+
+function emptyCensus(): CompositionCensus {
+  return {
+    elementCensus: {
+      video: 0,
+      audio: 0,
+      img: 0,
+      svg: 0,
+      canvas: 0,
+      subCompositionMounts: 0,
+    },
+    structuralAttributes: {
+      clipPath: false,
+      filter: false,
+      mixBlendMode: false,
+      transform: false,
+      mask: false,
+      positionFixed: false,
+      overflowHidden: false,
+      zIndex: false,
+      dataHasAudio: false,
+      dataDuration: false,
+      dataStart: false,
+      dataCompositionSrc: false,
+      backgroundImage: false,
+      maskImage: false,
+    },
+    timelineShape: {
+      nested: false,
+      subCompositionCount: 0,
+      usesGsap: false,
+      usesDataTimeline: false,
     },
   };
 }

@@ -112,6 +112,60 @@ describe("buildCompositionCensus", () => {
     expect(c.timelineShape.nested).toBe(true);
     expect(c.timelineShape.subCompositionCount).toBe(2);
   });
+
+  describe("value-scoped structural probes", () => {
+    it("positionFixed is false for inline position:absolute (name-vs-value scope)", () => {
+      const html = `<html><body><div data-composition-id="m" style="position: absolute"></div></body></html>`;
+      const c = buildCompositionCensus(html);
+      expect(c.structuralAttributes.positionFixed).toBe(false);
+    });
+
+    it("positionFixed is true for inline position:fixed", () => {
+      const html = `<html><body><div data-composition-id="m" style="position: fixed"></div></body></html>`;
+      const c = buildCompositionCensus(html);
+      expect(c.structuralAttributes.positionFixed).toBe(true);
+    });
+
+    it("overflowHidden catches inline overflow:hidden (symmetric with style-tag path)", () => {
+      const html = `<html><body><div data-composition-id="m" style="overflow: hidden"></div></body></html>`;
+      const c = buildCompositionCensus(html);
+      expect(c.structuralAttributes.overflowHidden).toBe(true);
+    });
+
+    it("overflowHidden is false for inline overflow:visible", () => {
+      const html = `<html><body><div data-composition-id="m" style="overflow: visible"></div></body></html>`;
+      const c = buildCompositionCensus(html);
+      expect(c.structuralAttributes.overflowHidden).toBe(false);
+    });
+
+    it("backgroundImage catches the inline shorthand `background: url(...)`", () => {
+      const html = `<html><body><div data-composition-id="m" style="background: url('bg.png') center"></div></body></html>`;
+      const c = buildCompositionCensus(html);
+      expect(c.structuralAttributes.backgroundImage).toBe(true);
+    });
+
+    it("maskImage catches the inline shorthand `mask: url(...)`", () => {
+      const html = `<html><body><div data-composition-id="m" style="mask: url('mask.svg')"></div></body></html>`;
+      const c = buildCompositionCensus(html);
+      expect(c.structuralAttributes.maskImage).toBe(true);
+    });
+
+    it("does not count `inherit` / `revert` as authored intent", () => {
+      const html = `<html><body><div data-composition-id="m" style="position: inherit; filter: revert"></div></body></html>`;
+      const c = buildCompositionCensus(html);
+      expect(c.structuralAttributes.positionFixed).toBe(false);
+      expect(c.structuralAttributes.filter).toBe(false);
+    });
+  });
+
+  it("short-circuits on HTML over the size cap without throwing", () => {
+    const huge = "a".repeat(21 * 1024 * 1024);
+    const c = buildCompositionCensus(huge);
+    // Guard-rail returns a zero census — no OOM, no crash.
+    expect(c.elementCensus.video).toBe(0);
+    expect(c.timelineShape.subCompositionCount).toBe(0);
+    expect(c.structuralAttributes.positionFixed).toBe(false);
+  });
 });
 
 describe("renderCompositionCensusBlock", () => {

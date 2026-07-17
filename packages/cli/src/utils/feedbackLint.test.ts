@@ -82,7 +82,7 @@ describe("lintFeedbackComment", () => {
   it("emits both warnings when a low-rating visual comment lacks both markers", () => {
     const warnings = lintFeedbackComment({
       rating: 3,
-      comment: "flickers at every scene boundary",
+      comment: "flicker at every scene boundary",
     });
     expect(new Set(warnings.map((w) => w.code))).toEqual(
       new Set(["missing-repro-command", "missing-composition-structure"]),
@@ -101,5 +101,57 @@ describe("mentionsVisualDefect", () => {
   it("returns false for comments about non-visual friction", () => {
     expect(mentionsVisualDefect("cli hangs on init prompt in non-TTY shells")).toBe(false);
     expect(mentionsVisualDefect("cloudrun deploy expired auth token")).toBe(false);
+  });
+
+  it("does not match on partial-word false positives (word boundary)", () => {
+    // The classic false positives Rames flagged in review.
+    expect(mentionsVisualDefect("scribbled on the blackboard")).toBe(false);
+    expect(mentionsVisualDefect("added to blacklist yesterday")).toBe(false);
+    expect(mentionsVisualDefect("brought a blanket to the office")).toBe(false);
+    expect(mentionsVisualDefect("let me visualize the graph")).toBe(false);
+    expect(mentionsVisualDefect("that's a corruptible pointer")).toBe(false);
+  });
+
+  it("does not fire on `render` — CLI's primary command, too noisy", () => {
+    // `hyperframes render` is the CLI's core command; comments like
+    // "render OOMed at 118s" are build/perf issues, not visual defects.
+    expect(mentionsVisualDefect("render OOMed at 118s")).toBe(false);
+    expect(mentionsVisualDefect("render hung on Alpine")).toBe(false);
+    expect(mentionsVisualDefect("preview render command took forever")).toBe(false);
+  });
+
+  it("still matches the real defect words in prose", () => {
+    expect(mentionsVisualDefect("output is a black frame at 0.5s")).toBe(true);
+    expect(mentionsVisualDefect("the whole sequence flickers hard")).toBe(false); // "flickers" (plural) — accepted false-neg
+    expect(mentionsVisualDefect("the whole sequence has a flicker at 2s")).toBe(true);
+    expect(mentionsVisualDefect("wrong frame at t=0.3")).toBe(true);
+  });
+});
+
+describe("marker-check case-insensitivity", () => {
+  it("does not warn when the reporter uses lowercase `Repro command:`", () => {
+    // Case asymmetry fix (C5): marker checks match `mentionsVisualDefect`'s
+    // case-normalization, so compliance in any case is honored.
+    const warnings = lintFeedbackComment({
+      rating: 5,
+      comment: [
+        "cloudrun submission kept timing out.",
+        "Repro command: cd project && npx hyperframes cloudrun submit",
+      ].join("\n"),
+    });
+    expect(warnings.filter((w) => w.code === "missing-repro-command")).toEqual([]);
+  });
+
+  it("does not double-warn when reporter uses lowercase `composition_structure:`", () => {
+    const warnings = lintFeedbackComment({
+      rating: 4,
+      comment: [
+        "REPRO COMMAND: cd proj && npx hyperframes render",
+        "composition_structure:",
+        "  elements: video=1 audio=0 img=0 svg=0 canvas=0 subComps=0",
+        "black frame at 0.5s",
+      ].join("\n"),
+    });
+    expect(warnings.filter((w) => w.code === "missing-composition-structure")).toEqual([]);
   });
 });

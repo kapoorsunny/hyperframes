@@ -6,11 +6,14 @@ import { FEEDBACK_RATING_SCALE } from "./feedbackRating.js";
  * appear in a non-10 feedback comment, the reporter should include a
  * `COMPOSITION_STRUCTURE:` block so maintainers can pattern-match against
  * known bug families without receiving the composition ZIP. Matched
- * case-insensitively against the raw comment.
+ * case-insensitively, word-bounded against the raw comment (so "black" fires
+ * on "black frame" but not "blackboard" / "no black frame at all").
  *
- * Keep the list short and unambiguous — false positives are cheap (a soft
- * warn), false negatives just mean the reporter skips the structure block on
- * a non-visual bug, which is fine.
+ * `"render"` intentionally omitted: `hyperframes render` is the CLI's primary
+ * command, so build/perf/hang reports mention it constantly and would drown
+ * the structure warning in false positives. Rely on the more specific tokens
+ * ("black", "blank", "flicker", "corrupt", "wrong frame") to identify actual
+ * visual defects.
  */
 export const VISUAL_DEFECT_KEYWORDS: readonly string[] = [
   "black",
@@ -19,7 +22,6 @@ export const VISUAL_DEFECT_KEYWORDS: readonly string[] = [
   "wrong frame",
   "blank",
   "visual",
-  "render",
 ] as const;
 
 /**
@@ -64,9 +66,13 @@ export function lintFeedbackComment(input: FeedbackLintInput): FeedbackLintWarni
   const trimmed = comment?.trim();
   if (!trimmed) return [];
 
+  // Marker checks are case-insensitive to match `mentionsVisualDefect`'s
+  // normalization. A reporter who writes `Repro command:` shouldn't get warned
+  // for compliance just because they lowercased the marker.
+  const upperTrimmed = trimmed.toUpperCase();
   const warnings: FeedbackLintWarning[] = [];
 
-  if (!trimmed.includes(REPRO_MARKER)) {
+  if (!upperTrimmed.includes(REPRO_MARKER)) {
     warnings.push({
       code: "missing-repro-command",
       message: [
@@ -80,7 +86,7 @@ export function lintFeedbackComment(input: FeedbackLintInput): FeedbackLintWarni
   if (
     rating <= COMPOSITION_STRUCTURE_RATING_CEILING &&
     mentionsVisualDefect(trimmed) &&
-    !trimmed.includes(STRUCTURE_MARKER)
+    !upperTrimmed.includes(STRUCTURE_MARKER)
   ) {
     warnings.push({
       code: "missing-composition-structure",
@@ -96,16 +102,26 @@ export function lintFeedbackComment(input: FeedbackLintInput): FeedbackLintWarni
   return warnings;
 }
 
+// Compile once. Word-boundary at both sides prevents "black" matching
+// "blackboard", "blank" matching "blanket", "visual" matching "visualize".
+// Plural forms (e.g. "flickers") won't match — accepted tradeoff for a soft
+// warn: false negatives skip the nudge, false positives waste the reporter's
+// attention.
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const VISUAL_DEFECT_REGEX = new RegExp(
+  `(^|[^A-Za-z0-9_])(?:${VISUAL_DEFECT_KEYWORDS.map(escapeRegex).join("|")})(?![A-Za-z0-9_])`,
+  "i",
+);
+
 /**
- * Case-insensitive substring probe against `VISUAL_DEFECT_KEYWORDS`. Exposed
- * for tests and reuse; keywords are matched anywhere in the comment (no word
- * boundaries) since real reports mix them into free prose. False positives
- * cost one soft warn, which is acceptable.
+ * Case-insensitive word-bounded probe against `VISUAL_DEFECT_KEYWORDS`.
+ * Exposed for tests and reuse. Word boundaries are enforced on both sides so
+ * partial-word false positives ("blackboard", "visualize", "corruptible")
+ * don't trigger the structure-block nudge.
  */
 export function mentionsVisualDefect(comment: string): boolean {
-  const lower = comment.toLowerCase();
-  for (const kw of VISUAL_DEFECT_KEYWORDS) {
-    if (lower.includes(kw)) return true;
-  }
-  return false;
+  return VISUAL_DEFECT_REGEX.test(comment);
 }
