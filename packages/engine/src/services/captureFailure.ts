@@ -58,6 +58,7 @@ const PROTOCOL_TIMEOUT_PATTERNS = [
   /Runtime\.callFunctionOn timed out/i,
   /Runtime\.evaluate timed out/i,
   /HeadlessExperimental\.beginFrame timed out/i,
+  /drawElement worker encode timed out \(frame \d+\)/i,
   /Protocol error[\s\S]*tim(?:ed|e) out/i,
   /Waiting failed:\s*\d+\s*ms exceeded/i,
   /Waiting failed[\s\S]*timeout/i,
@@ -103,11 +104,25 @@ function matchesAny(message: string, patterns: readonly RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(message));
 }
 
+const IO_OPERATION_TOKENS = ["read", "write", "rename", "copy", "open", "file", "directory"];
+
+function hasIoOperationFailure(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.split(/[\r\n]/).some((line) =>
+    IO_OPERATION_TOKENS.some((operation) => {
+      const operationIndex = line.indexOf(operation);
+      if (operationIndex < 0) return false;
+      const failureStart = operationIndex + operation.length;
+      return line.indexOf("failed", failureStart) >= 0 || line.indexOf("error", failureStart) >= 0;
+    }),
+  );
+}
+
 function ioError(error: unknown, message: string): boolean {
   const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
   return (
     Boolean(code && /^(?:EACCES|EEXIST|EIO|EMFILE|ENFILE|ENOENT|ENOSPC|EPERM|EROFS)$/.test(code)) ||
-    /(?:read|write|rename|copy|open|file|directory).*(?:failed|error)/i.test(message)
+    hasIoOperationFailure(message)
   );
 }
 

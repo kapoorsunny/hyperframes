@@ -6,6 +6,7 @@ describe("classifyCaptureFailure", () => {
     ["Target closed", "transient_browser"],
     ["Runtime.callFunctionOn timed out after 30000ms", "protocol_timeout"],
     ["Runtime.evaluate timed out", "protocol_timeout"],
+    ["drawElement worker encode timed out (frame 42)", "protocol_timeout"],
     ["Waiting failed: 30000ms exceeded", "protocol_timeout"],
     ["JavaScript heap out of memory", "memory_exhaustion"],
     ["drawElement self-verify failed", "verification"],
@@ -53,6 +54,14 @@ describe("classifyCaptureFailure", () => {
     expect(failure.workerDiagnostics[0]?.workerId).toBe(2);
     expect(Object.isFrozen(failure.workerDiagnostics)).toBe(true);
     expect(Object.isFrozen(failure.workerDiagnostics[0]?.lines)).toBe(true);
+  });
+
+  it("classifies repeated operation text in linear time", () => {
+    const repeatedCopy = "copy".repeat(25_000);
+
+    expect(classifyCaptureFailure(new Error(repeatedCopy)).kind).toBe("authoring");
+    expect(classifyCaptureFailure(new Error(`${repeatedCopy} failed`)).kind).toBe("io");
+    expect(classifyCaptureFailure(new Error("copy\nfailed")).kind).toBe("authoring");
   });
 
   it("marks structural failures fatal but leaves retryable failures non-fatal", () => {
