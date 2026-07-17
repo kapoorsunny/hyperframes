@@ -92,6 +92,7 @@ import {
 } from "../utils/render-success-state.js";
 import type { ProducerLogger, RenderJob } from "@hyperframes/producer";
 import {
+  EXTRACT_CACHE_DIR_DISABLED_ALIASES,
   MAX_VP9_CPU_USED,
   MIN_VP9_CPU_USED,
   isVideoFrameFormat,
@@ -406,7 +407,7 @@ export default defineCommand({
         "Directory for the content-addressed extracted-frame cache. " +
         "Use to relocate the cache off the system drive when the OS temp " +
         "directory lives on a small partition (e.g. Windows C: exhaustion " +
-        'during long renders). Pass "off" / "none" / "false" / "0" to ' +
+        `during long renders). Pass ${EXTRACT_CACHE_DIR_DISABLED_ALIASES.map((a) => `"${a}"`).join(" / ")} to ` +
         "disable caching entirely (frames extract into the render's workDir " +
         "and are cleaned up when the render ends). Default: " +
         "<tmpdir>/hyperframes-extract-cache-<uid>. " +
@@ -604,7 +605,7 @@ export default defineCommand({
     if (typeof args["frames-cache-dir"] === "string" && args["frames-cache-dir"].trim() !== "") {
       const raw = args["frames-cache-dir"].trim();
       const normalized = raw.toLowerCase();
-      const isDisableAlias = ["off", "none", "false", "0"].includes(normalized);
+      const isDisableAlias = EXTRACT_CACHE_DIR_DISABLED_ALIASES.includes(normalized);
       process.env.HYPERFRAMES_EXTRACT_CACHE_DIR = isDisableAlias ? raw : resolve(raw);
     }
 
