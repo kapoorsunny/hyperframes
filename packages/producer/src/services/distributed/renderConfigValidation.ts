@@ -229,7 +229,12 @@ export function validateVariablesPayload(value: unknown): void {
       `must be a plain JSON object (got ${describeValue(value)})`,
     );
   }
-  walkVariables(value, "config.variables", new WeakSet());
+  validateJsonSafeValue(value, "config.variables");
+}
+
+/** Validate any JSON-boundary value without silently normalizing it. */
+export function validateJsonSafeValue(value: unknown, field: string): void {
+  walkVariables(value, field, new WeakSet());
 }
 
 /** Per-typeof rejection messages for JSON-unsafe leaves. */

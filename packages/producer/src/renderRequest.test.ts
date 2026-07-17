@@ -25,6 +25,7 @@ function request() {
       fps: { num: 30, den: 1 },
       quality: "high",
       format: "mp4",
+      gifLoop: 0,
       workers: 3,
       useGpu: true,
       strictness: "best-effort",
@@ -72,9 +73,12 @@ describe("RenderRequest", () => {
       height: 1080,
       format: "mp4",
       chunkSize: 120,
+      strictness: "best-effort",
+      outputResolutionAspectAgnostic: true,
       variables: value.options.variables,
-      producerConfig: { protocolTimeout: 123_456 },
+      engineConfig: { protocolTimeout: 123_456 },
     });
+    expect(distributed).not.toHaveProperty("producerConfig");
   });
 
   it("round-trips distributed adapter fields back into the shared request", () => {
@@ -90,6 +94,12 @@ describe("RenderRequest", () => {
       fps: value.options.fps,
       quality: value.options.quality,
       format: value.options.format,
+      crf: value.options.crf,
+      videoFrameFormat: value.options.videoFrameFormat,
+      outputResolution: value.options.outputResolution,
+      outputResolutionAspectAgnostic: value.options.outputResolutionAspectAgnostic,
+      hdrMode: value.options.hdrMode,
+      strictness: value.options.strictness,
       entryFile: value.options.entryFile,
       variables: value.options.variables,
       distributed: value.options.distributed,
@@ -113,5 +123,51 @@ describe("RenderRequest", () => {
     const value = request();
     value.options.fps = { num: 30_000, den: 1_001 };
     expect(() => distributedConfigFromRequest(value)).toThrow("does not support fps");
+  });
+
+  it("rejects JSON-unsafe request values before serialization", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    for (const variables of [
+      { missing: undefined },
+      { callback: () => undefined },
+      { identifier: 1n },
+      { ratio: Number.NaN },
+      { when: new Date(0) },
+      cyclic,
+    ]) {
+      expect(() =>
+        createRenderRequest({
+          projectDir: "/project",
+          outputPath: "/output/video.mp4",
+          options: { fps: { num: 30, den: 1 }, quality: "standard", format: "mp4", variables },
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("rejects malformed optional and distributed fields", () => {
+    const value = request();
+    expect(() =>
+      parseRenderRequest({ ...value, options: { ...value.options, workers: "many" } }),
+    ).toThrow("workers");
+    expect(() =>
+      parseRenderRequest({
+        ...value,
+        options: { ...value.options, distributed: { ...value.options.distributed, width: "wide" } },
+      }),
+    ).toThrow("distributed.width");
+  });
+
+  it("validates the reverse distributed adapter at the wire boundary", () => {
+    const distributed = distributedConfigFromRequest(request());
+    distributed.width = 1921;
+    expect(() =>
+      renderRequestFromDistributedConfig({
+        projectDir: "/project",
+        outputPath: "/output/video.mp4",
+        config: distributed,
+      }),
+    ).toThrow("must be even");
   });
 });
