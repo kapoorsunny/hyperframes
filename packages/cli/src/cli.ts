@@ -447,7 +447,7 @@ async function executeCli(): Promise<void> {
     result = commandResultForError(error);
     if (!(error instanceof CliResultSignal)) {
       commandFailed = true;
-      reportCommandFailure(command, error);
+      await reportCommandFailure(command, error);
       const typed = error instanceof CliUsageError || error instanceof CliRuntimeError;
       if (error instanceof CliUsageError && !error.result.presented) await showRequestedUsage();
       if (!typed || !error.result.presented) {
