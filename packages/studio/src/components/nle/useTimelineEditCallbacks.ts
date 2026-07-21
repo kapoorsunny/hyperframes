@@ -36,6 +36,46 @@ export interface TimelineEditCallbackDeps {
   handleRazorSplitAll: (splitTime: number) => Promise<void> | void;
 }
 
+interface TimelineKeyframeTargetAnimation {
+  id: string;
+  propertyGroup?: string | null;
+  keyframes?: unknown;
+}
+
+interface TimelineCachedKeyframe {
+  percentage: number;
+  tweenPercentage?: number;
+  propertyGroup?: string;
+}
+
+/**
+ * Resolve a rendered timeline diamond back to the animation that authored it.
+ * Flat tweens use synthesized diamonds, so a mixed flat tween may have neither
+ * a property group nor real keyframes. It is safe to fall back only when that
+ * flat tween is the selection's sole animation; multiple candidates remain
+ * unresolved rather than retiming an arbitrary tween.
+ */
+export function resolveTimelineKeyframeTarget(
+  pct: number,
+  keyframes: ReadonlyArray<TimelineCachedKeyframe>,
+  animations: ReadonlyArray<TimelineKeyframeTargetAnimation>,
+): { animId: string; tweenPct: number } | null {
+  const kf = keyframes.find((item) => Math.abs(item.percentage - pct) < 0.2);
+  const group = kf?.propertyGroup;
+  const groupedCandidates = group
+    ? animations.filter((animation) => animation.propertyGroup === group)
+    : [];
+  const groupedKeyframed = groupedCandidates.find((animation) => animation.keyframes);
+  const soleGroupedFlat =
+    groupedCandidates.length === 1 && !groupedCandidates[0]?.keyframes
+      ? groupedCandidates[0]
+      : undefined;
+  const keyframed = animations.find((animation) => animation.keyframes);
+  const soleFlat = animations.length === 1 && !animations[0]?.keyframes ? animations[0] : undefined;
+  const animation = groupedKeyframed ?? soleGroupedFlat ?? keyframed ?? soleFlat;
+  return animation ? { animId: animation.id, tweenPct: kf?.tweenPercentage ?? pct } : null;
+}
+
 /**
  * Builds the timeline edit callback bag (move/resize/split/razor plus the
  * keyframe-diamond callbacks) provided to `<Timeline>` via TimelineEditProvider.
@@ -76,12 +116,7 @@ export function useTimelineEditCallbacks({
     // fallow-ignore-next-line complexity
     (pct: number): { animId: string; tweenPct: number } | null => {
       const cached = usePlayerStore.getState().keyframeCache.get(domEditSelection?.id ?? "");
-      const kf = cached?.keyframes.find((k) => Math.abs(k.percentage - pct) < 0.2);
-      const group = kf?.propertyGroup;
-      const anim =
-        (group ? selectedGsapAnimations.find((a) => a.propertyGroup === group) : undefined) ??
-        selectedGsapAnimations.find((a) => a.keyframes);
-      return anim ? { animId: anim.id, tweenPct: kf?.tweenPercentage ?? pct } : null;
+      return resolveTimelineKeyframeTarget(pct, cached?.keyframes ?? [], selectedGsapAnimations);
     },
     [domEditSelection?.id, selectedGsapAnimations],
   );
@@ -154,12 +189,19 @@ export function useTimelineEditCallbacks({
           decision.position != null &&
           decision.duration != null
         ) {
-          handleGsapResizeKeyframedTween(
-            target.animId,
-            decision.position,
-            decision.duration,
-            decision.pctRemap,
-          );
+          if (anim.keyframes) {
+            handleGsapResizeKeyframedTween(
+              target.animId,
+              decision.position,
+              decision.duration,
+              decision.pctRemap,
+            );
+          } else {
+            handleGsapUpdateMeta(target.animId, {
+              position: decision.position,
+              duration: decision.duration,
+            });
+          }
         }
       },
       onChangeKeyframeEase: (_elId: string, _pct: number, ease: string) => {
