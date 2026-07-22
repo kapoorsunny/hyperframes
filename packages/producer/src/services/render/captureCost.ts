@@ -108,6 +108,36 @@ function combineCaptureCostEstimates(
   };
 }
 
+/**
+ * Advisory heap warning (field OOM, 0.7.66 on 24GB: auto-picked 6 workers
+ * blew Node's default ~4GB heap). Returns the warning message, or undefined
+ * when it should not fire:
+ *
+ * - Auto-sized renders only (`requestedWorkers === undefined`) — the field
+ *   failure was auto sizing, and an explicit `--workers N` is the operator's
+ *   own call.
+ * - Not enforced as a cap yet — the per-worker budget constant is derived
+ *   from one field report; the `workers_heap_*` telemetry emitted with the
+ *   sizing decides whether to enforce (see the TODO on HEAP_PER_WORKER_MB in
+ *   @hyperframes/engine's parallelCoordinator). The message gives the
+ *   operator the actionable knobs today.
+ *
+ * Pure so the message shape + firing condition are unit-testable with a
+ * synthetic `WorkerSizing` (the real one depends on the host's heap).
+ */
+export function buildHeapAdvisoryWarning(
+  sizing: WorkerSizing,
+  requestedWorkers: number | undefined,
+): string | undefined {
+  if (requestedWorkers !== undefined || !sizing.exceedsHeapAdvisory) return undefined;
+  return (
+    `[Render] ${sizing.workers} capture workers may exceed this process's V8 heap ` +
+    `(limit ${sizing.heapLimitMb}MB supports ~${sizing.heapBasedWorkers}). If the render ` +
+    `dies with "JavaScript heap out of memory", raise the heap ` +
+    `(NODE_OPTIONS=--max-old-space-size=8192) or pass --workers ${sizing.heapBasedWorkers}.`
+  );
+}
+
 export function resolveRenderWorkerCount(
   totalFrames: number,
   requestedWorkers: number | undefined,
@@ -152,23 +182,12 @@ export function resolveRenderWorkerCount(
     ...cfg,
     captureCostMultiplier: captureCost.multiplier,
   });
+  // The heap advisory is deliberately NOT logged here: this function's
+  // "no unexpected warns" unit-test contract would become dependent on the
+  // test machine's actual V8 heap limit. The orchestrator's onSizing consumer
+  // emits it via buildHeapAdvisoryWarning.
   onSizing?.(sizing);
   const workerCount = sizing.workers;
-
-  // Advisory heap check (field OOM, 0.7.66 on 24GB: auto-picked 6 workers
-  // blew Node's default ~4GB heap). Not enforced yet — the budget constant is
-  // derived from one field report; the workers_heap_* telemetry emitted with
-  // this sizing decides whether to enforce. The warning gives the operator
-  // the actionable knobs today.
-  if (sizing.exceedsHeapAdvisory) {
-    log.warn(
-      `[Render] ${workerCount} capture workers may exceed this process's V8 heap ` +
-        `(limit ${sizing.heapLimitMb}MB supports ~${sizing.heapBasedWorkers}). If the render ` +
-        `dies with "JavaScript heap out of memory", raise the heap ` +
-        `(NODE_OPTIONS=--max-old-space-size=8192) or pass --workers ${sizing.heapBasedWorkers}.`,
-      { heapLimitMb: sizing.heapLimitMb, heapBasedWorkers: sizing.heapBasedWorkers },
-    );
-  }
 
   if (requestedWorkers !== undefined || captureCost.multiplier <= 1) {
     return workerCount;

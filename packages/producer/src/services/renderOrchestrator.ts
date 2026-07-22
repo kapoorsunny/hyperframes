@@ -125,6 +125,7 @@ import { resolveVideoCaptureBeyondViewport } from "./render/captureBeyondViewpor
 import {
   type CaptureCalibrationSample,
   type CaptureCostEstimate,
+  buildHeapAdvisoryWarning,
   resolveRenderWorkerCount,
   runCaptureCalibration,
 } from "./render/captureCost.js";
@@ -2487,6 +2488,13 @@ async function executeRenderPipeline(input: {
       captureCalibration?.estimate,
       (sizing) => {
         workerSizing = sizing;
+        const heapAdvisory = buildHeapAdvisoryWarning(sizing, job.config.workers);
+        if (heapAdvisory) {
+          log.warn(heapAdvisory, {
+            heapLimitMb: sizing.heapLimitMb,
+            heapBasedWorkers: sizing.heapBasedWorkers,
+          });
+        }
       },
     );
     // DE priority inversion — see shouldPreferSingleWorkerDrawElement for the

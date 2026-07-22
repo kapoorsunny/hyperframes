@@ -124,6 +124,7 @@ const HEAP_RESERVED_MB = 1024;
 // default heap ⇒ >~500MB/worker + base. ponytail: advisory-only until the
 // workers_heap_* telemetry added alongside this constant validates the figure
 // — enforcing a guessed budget could silently cut worker counts fleet-wide.
+// TODO(PRINFRA-341): decide enforcement after ~2 weeks of fleet soak.
 const HEAP_PER_WORKER_MB = 640;
 const MIN_WORKERS = 1;
 const MAX_WORKER_DIAGNOSTIC_LINES = 8;
