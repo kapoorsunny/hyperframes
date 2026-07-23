@@ -41,11 +41,9 @@
  * into a shared module so the stages can import without reaching back.
  */
 
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import {
   type BeforeCaptureHook,
   type CaptureOptions,
@@ -64,7 +62,7 @@ import {
   distributeFramesInterleaved,
   executeParallelCapture,
   getCapturePerfSummary,
-  getFfmpegBinary,
+  psnrDb,
   recaptureDrawElementFrameForVerify,
   completeDeferredDrawElementInit,
   initializeSession,
@@ -223,27 +221,9 @@ export type CaptureStreamingStageResult =
       success: false;
     };
 
-const execFileP = promisify(execFile);
-
-/** PSNR (average, dB) between two same-dimension encoded images via ffmpeg. */
-async function psnrDb(a: Buffer, b: Buffer): Promise<number> {
-  const dir = await mkdtemp(join(tmpdir(), "hf-de-verify-"));
-  try {
-    const pa = join(dir, "a.jpg");
-    const pb = join(dir, "b.jpg");
-    await Promise.all([writeFile(pa, a), writeFile(pb, b)]);
-    const { stderr } = await execFileP(
-      getFfmpegBinary(),
-      ["-hide_banner", "-i", pa, "-i", pb, "-lavfi", "psnr", "-f", "null", "-"],
-      { maxBuffer: 4 * 1024 * 1024 },
-    );
-    const m = /average:(inf|[\d.]+)/.exec(stderr);
-    if (!m) throw new Error(`psnr parse failed: ${stderr.slice(-300)}`);
-    return m[1] === "inf" ? Infinity : Number(m[1]);
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
-}
+// psnrDb moved to @hyperframes/engine (utils/psnr.ts) so the parallel
+// disk-path verify (parallelCoordinator) and this drain guard share one
+// comparison implementation.
 
 // ── drawElement drain-time safety checks (ungated-release safety net) ──
 // Shared by the sequential worker-encode loop and the interleaved parallel
