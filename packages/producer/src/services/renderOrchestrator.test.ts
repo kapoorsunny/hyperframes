@@ -2186,8 +2186,6 @@ describe("closeOrphanedProbeForRetry (probe cleanup before verify-triggered retr
     await closeOrphanedProbeForRetry(stubSession, closer, log, "streaming");
 
     expect(log.warn).toHaveBeenCalledTimes(1);
-    expect((log.warn.mock.calls[0][1] as { error: string }).error).toBe(
-      "string-only rejection",
-    );
+    expect((log.warn.mock.calls[0][1] as { error: string }).error).toBe("string-only rejection");
   });
 });

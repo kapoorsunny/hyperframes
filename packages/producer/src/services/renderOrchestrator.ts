@@ -1487,10 +1487,9 @@ export async function closeOrphanedProbeForRetry(
   try {
     await closer(probe);
   } catch (closeErr) {
-    log.warn(
-      `[Render] probe close before ${retryContext} retry failed; continuing with retry`,
-      { error: closeErr instanceof Error ? closeErr.message : String(closeErr) },
-    );
+    log.warn(`[Render] probe close before ${retryContext} retry failed; continuing with retry`, {
+      error: closeErr instanceof Error ? closeErr.message : String(closeErr),
+    });
   }
 }
 
